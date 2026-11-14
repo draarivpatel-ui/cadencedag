@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CadenceDAG | Offline Critical-Path &amp; Pomodoro Planner</title>
+  <meta name="description" content="Offline Critical-Path Method DAG analyzer, WSPT Pomodoro focus scheduler, deadline slippage simulator, and RFC 5545 calendar exporter.">
+  <meta name="author" content="Aariv Patel">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f1722'/%3E%3Ccircle cx='8' cy='16' r='3' fill='%232dd4bf'/%3E%3Ccircle cx='17' cy='9' r='3' fill='%23fb7185'/%3E%3Ccircle cx='25' cy='16' r='3' fill='%23fb7185'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="brand">
+      <svg width="28" height="28" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="7" fill="#0f1722" stroke="#233246"></rect>
+        <circle cx="8" cy="16" r="3" fill="#2dd4bf"></circle>
+        <circle cx="17" cy="9" r="3" fill="#fb7185"></circle>
+        <circle cx="17" cy="23" r="3" fill="#38bdf8"></circle>
+        <circle cx="25" cy="16" r="3" fill="#fb7185"></circle>
+        <path d="M10.5 14.3 L14.8 10.6 M10.5 17.7 L14.8 21.4 M19.5 10.6 L22.8 14.3" stroke="#94a3b8" stroke-width="1.6" fill="none"></path>
+      </svg>
+      <div>
+        <span class="brand-name">CadenceDAG</span>
+        <span class="brand-sub">Critical-Path &amp; WSPT Pomodoro Scheduler</span>
+      </div>
+    </div>
+    <span class="badge">Zero Dependencies | Offline RFC 5545</span>
+  </header>
+
+  <main class="container">
+    <section class="hero">
+      <div>
+        <h1>Schedule Tasks by <span>Critical Slack</span>, Not Guesswork</h1>
+        <p>Turn a dependency graph into a deterministic critical path, simulate deadline slippage before it compounds, compare WSPT versus critical-first execution, and export every focus block to a standard .ics calendar.</p>
+      </div>
+      <div class="readout-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">Critical Makespan</div>
+          <div class="kpi-value" id="kpi-makespan">-</div>
+          <div class="kpi-sub" id="kpi-makespan-sub">-</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Critical Tasks</div>
+          <div class="kpi-value" id="kpi-crit-count">-</div>
+          <div class="kpi-sub" id="kpi-crit-sub">-</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Pomodoro Focus Blocks</div>
+          <div class="kpi-value" id="kpi-blocks">-</div>
+          <div class="kpi-sub" id="kpi-blocks-sub">-</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Weighted Completion</div>
+          <div class="kpi-value" id="kpi-wspt">-</div>
+          <div class="kpi-sub" id="kpi-wspt-sub">-</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="tabs" role="tablist" aria-label="CadenceDAG Views">
+      <button class="tab" role="tab" id="tab-dag" aria-selected="true" aria-controls="panel-dag" type="button">01 DAG &amp; Slack Gantt</button>
+      <button class="tab" role="tab" id="tab-nodes" aria-selected="false" aria-controls="panel-nodes" type="button">02 Node Slack Table</button>
+      <button class="tab" role="tab" id="tab-blocks" aria-selected="false" aria-controls="panel-blocks" type="button">03 Pomodoro Timeline</button>
+    </div>
+
+    <div class="layout-split">
+      <aside>
+        <div class="card">
+          <h2>Workflow &amp; Policy</h2>
+          <div class="field">
+            <label for="preset-select">Sample Workflow Graph</label>
+            <select id="preset-select"></select>
+          </div>
+          <div class="field">
+            <label for="policy-select">Single-Worker Priority Policy</label>
+            <select id="policy-select">
+              <option value="wspt">WSPT (Highest Weight / Duration)</option>
+              <option value="critical">Critical-First (Min Total Float)</option>
+              <option value="shortest">SPT (Shortest Task First)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="focus-min-input">Focus Block Length (min)</label>
+            <input id="focus-min-input" type="number" min="15" max="90" value="25">
+          </div>
+          <div class="field">
+            <label for="break-min-input">Break Interval (min)</label>
+            <input id="break-min-input" type="number" min="0" max="30" value="5">
+          </div>
+          <div class="field">
+            <label for="cap-min-input">Daily Focus Budget (min)</label>
+            <input id="cap-min-input" type="number" min="60" max="720" step="30" value="300">
+          </div>
+          <div class="field">
+            <label for="start-date-input">Schedule Start Date</label>
+            <input id="start-date-input" type="date" value="2026-11-16">
+          </div>
+          <div class="btn-row">
+            <button id="btn-export-ics" class="btn btn-primary" type="button">Export .ics Calendar</button>
+            <button id="btn-export-json" class="btn" type="button">Export JSON</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Add Dependency Task</h2>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:0.5rem;">
+            <div class="field">
+              <label for="new-task-id">Task ID</label>
+              <input id="new-task-id" type="text" placeholder="T10">
+            </div>
+            <div class="field">
+              <label for="new-task-dur">Duration (m)</label>
+              <input id="new-task-dur" type="number" min="5" value="30">
+            </div>
+          </div>
+          <div class="field">
+            <label for="new-task-title">Title</label>
+            <input id="new-task-title" type="text" placeholder="Verify final metrics">
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr 2fr; gap:0.5rem;">
+            <div class="field">
+              <label for="new-task-weight">Priority (1-10)</label>
+              <input id="new-task-weight" type="number" min="1" max="10" value="8">
+            </div>
+            <div class="field">
+              <label for="new-task-deps">Upstream IDs (comma)</label>
+              <input id="new-task-deps" type="text" placeholder="T6, T7">
+            </div>
+          </div>
+          <button id="btn-add-task" class="btn" type="button" style="width:100%">Validate &amp; Add Node</button>
+          <div id="error-banner" class="error-banner" role="alert"></div>
+        </div>
+      </aside>
+
+      <section>
+        <div id="panel-dag" class="panel is-active" role="tabpanel" aria-labelledby="tab-dag">
+          <div class="card">
+            <h2>Topological Dependency DAG <span class="mono" style="font-size:0.78rem; color:var(--rose)">Red = Critical Path (0m Float)</span></h2>
+            <svg id="svg-dag" class="chart-svg" viewBox="0 0 800 300" role="img" aria-label="Directed acyclic graph of tasks and critical path"></svg>
+          </div>
+          <div class="card">
+            <h2>Slack-Aware Earliest Start Gantt &amp; Delay Slippage Simulator</h2>
+            <div style="display:grid; grid-template-columns: 2fr 1fr; gap:0.75rem; margin-bottom:0.75rem;">
+              <div class="field">
+                <label for="slip-task-select">Test Delay on Task</label>
+                <select id="slip-task-select"></select>
+              </div>
+              <div class="field">
+                <label for="slip-min-input">Delay Added (min)</label>
+                <input id="slip-min-input" type="number" min="0" max="240" step="10" value="0">
+              </div>
+            </div>
+            <p id="slip-summary" style="margin:0 0 0.75rem; font-size:0.83rem; color:var(--muted);"></p>
+            <svg id="svg-gantt" class="chart-svg" viewBox="0 0 800 280" role="img" aria-label="Critical path Gantt chart with slack bands"></svg>
+          </div>
+        </div>
+
+        <div id="panel-nodes" class="panel" role="tabpanel" aria-labelledby="tab-nodes">
+          <div class="card">
+            <h2>CPM Forward/Backward Pass Metrics</h2>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>ID</th><th>Task</th><th>Dur</th><th>Window [ES, EF]</th><th>Total Float</th><th>Free Float</th><th>WSPT w/p</th><th>Path</th></tr>
+                </thead>
+                <tbody id="slack-table-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div id="panel-blocks" class="panel" role="tabpanel" aria-labelledby="tab-blocks">
+          <div class="card">
+            <h2>Scheduled Pomodoro Focus Blocks (.ics Ready)</h2>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Block</th><th>Day</th><th>UTC Window</th><th>Slice</th><th>Task</th><th>Priority</th></tr>
+                </thead>
+                <tbody id="blocks-table-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div id="capybara-easter" class="capybara-nook" role="button" tabindex="0" title="Secret slack mascot">
+          <svg width="34" height="24" viewBox="0 0 64 44" aria-hidden="true">
+            <ellipse cx="32" cy="27" rx="22" ry="13" fill="#8c6239"></ellipse>
+            <circle cx="49" cy="18" r="9" fill="#9b6e44"></circle>
+            <ellipse cx="55" cy="20" rx="5" ry="3.5" fill="#754c29"></ellipse>
+            <circle cx="50" cy="16" r="1.4" fill="#0f1722"></circle>
+            <ellipse cx="44" cy="11" rx="2.4" ry="3.2" fill="#754c29"></ellipse>
+            <rect x="18" y="35" width="5" height="7" rx="2" fill="#754c29"></rect>
+            <rect x="38" y="35" width="5" height="7" rx="2" fill="#754c29"></rect>
+            <circle cx="49" cy="8" r="3" fill="#f59e0b"></circle>
+          </svg>
+          <span id="capybara-status">Capybara Chief Slack Auditor: staying calm around 0m float.</span>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script src="js/dag-engine.js"></script>
+  <script src="js/ui-dag.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

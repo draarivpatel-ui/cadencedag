@@ -1,0 +1,11 @@
+{
+  "name": "cadencedag",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Offline Critical-Path Method DAG planner, WSPT Pomodoro scheduler, slippage simulator, and RFC 5545 .ics calendar exporter.",
+  "scripts": {
+    "test": "node --test tests/"
+  },
+  "author": "Aariv Patel",
+  "license": "MIT"
+}

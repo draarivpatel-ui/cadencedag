@@ -1,0 +1,7 @@
+The linear nature of flat checklists causes students to work on easy tasks, whereas one locked task blocks the entire list. I have incorporated the theme of productivity in CadenceDAG, thus you can schedule tasks based on actual dependency slack in an offline mode.
+
+Loading the software sprint of nine tasks invokes Kahn's topological sort and identifies the zero-float critical path of makespan 250 minutes.
+
+See how the project is affected if I insert a thirty-minute delay in the task T3, which is part of the side path of a twenty-five minute float. Most of the delay gets absorbed by slack and pushes back the end time by merely five minutes, but insertion of the same delay to a red critical task shifts the completion date minute for minute.
+
+I now have the choice of toggling to Weighted Shortest Processing Time, Critical First, and Shortest First scheduling, adding nodes with live cycle checks or viewing the Pomodoro Timeline tab for each focus block. It just takes one click to export the RFC 5545 calendar, and even the Capybara Chief Slack Auditor watches the zero-float edges closely.
