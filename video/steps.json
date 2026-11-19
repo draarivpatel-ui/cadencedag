@@ -1,94 +1,431 @@
 [
-  {"do": "wait", "ms": 1500},
-  {"do": "move", "selector": "#kpi-crit-count", "ms": 1400},
-  {"do": "wait", "ms": 1500},
-  {"do": "move", "selector": "#svg-dag", "ms": 1600},
-  {"do": "at", "s": 15.8},
-  {"do": "move", "selector": "#preset-select", "ms": 900},
-  {"do": "select", "selector": "#preset-select", "value": "ap-robotics-week"},
-  {"do": "at", "s": 20.0},
-  {"do": "move", "selector": "#kpi-makespan", "ms": 900},
-  {"do": "wait", "ms": 1800},
-  {"do": "move", "selector": "#kpi-crit-count", "ms": 900},
-  {"do": "at", "s": 25.8},
-  {"do": "move", "selector": "#next-action-text", "ms": 1000},
-  {"do": "at", "s": 36.4},
-  {"do": "scrollTo", "selector": "#svg-dag", "ms": 1200, "offset": 110},
-  {"do": "move", "selector": "g.dag-node[data-id=\"A6\"]", "ms": 900},
-  {"do": "at", "s": 38.9},
-  {"do": "click", "selector": "g.dag-node[data-id=\"A5\"]", "ms": 1000},
-  {"do": "wait", "ms": 900},
-  {"do": "scrollTo", "selector": "#inspector-cpm", "ms": 800, "offset": 230},
-  {"do": "move", "selector": "#inspector-title", "ms": 1000},
-  {"do": "move", "selector": "#inspector-cpm", "ms": 900},
-  {"do": "at", "s": 46.4},
-  {"do": "scrollTo", "selector": "#slip-task-select", "ms": 1200, "offset": 150},
-  {"do": "move", "selector": "#slip-task-select", "ms": 700},
-  {"do": "select", "selector": "#slip-task-select", "value": "A5"},
-  {"do": "eval", "js": "(() => { const e = document.getElementById('slip-min-input'); e.value = ''; e.dispatchEvent(new Event('input', { bubbles: true })); })()"},
-  {"do": "type", "selector": "#slip-min-input", "text": "30", "cps": 6},
-  {"do": "at", "s": 50.2},
-  {"do": "move", "selector": "#slip-summary", "ms": 900},
-  {"do": "at", "s": 55.2},
-  {"do": "move", "selector": "#slip-task-select", "ms": 800},
-  {"do": "select", "selector": "#slip-task-select", "value": "A6"},
-  {"do": "at", "s": 59.7},
-  {"do": "move", "selector": "#slip-summary", "ms": 900},
-  {"do": "wait", "ms": 1500},
-  {"do": "move", "selector": "#svg-gantt", "ms": 1200},
-  {"do": "at", "s": 70.5},
-  {"do": "select", "selector": "#slip-task-select", "value": ""},
-  {"do": "at", "s": 73.3},
-  {"do": "scrollTo", "selector": "#policy-compare-strip", "ms": 1200, "offset": 170},
-  {"do": "at", "s": 77.4},
-  {"do": "move", "selector": ".policy-cell:nth-child(1) .policy-metric", "ms": 900},
-  {"do": "wait", "ms": 2500},
-  {"do": "move", "selector": ".policy-cell:nth-child(3) .policy-metric", "ms": 900},
-  {"do": "at", "s": 84.9},
-  {"do": "move", "selector": ".policy-cell:nth-child(2) .policy-metric", "ms": 900},
-  {"do": "wait", "ms": 2000},
-  {"do": "move", "selector": ".policy-cell:nth-child(2) .policy-metric-small:last-child", "ms": 900},
-  {"do": "at", "s": 92.6},
-  {"do": "scrollTo", "selector": "#tab-blocks", "ms": 1100, "offset": 90},
-  {"do": "click", "selector": "#tab-blocks", "ms": 800},
-  {"do": "at", "s": 95.3},
-  {"do": "click", "selector": "#btn-timer-start", "ms": 800},
-  {"do": "move", "selector": "#focus-countdown", "ms": 900},
-  {"do": "wait", "ms": 3500},
-  {"do": "at", "s": 100.8},
-  {"do": "click", "selector": "#btn-timer-complete", "ms": 800},
-  {"do": "at", "s": 103.7},
-  {"do": "click", "selector": "#clock-toggle", "ms": 800},
-  {"do": "wait", "ms": 1800},
-  {"do": "click", "selector": "#clock-toggle", "ms": 500},
-  {"do": "wait", "ms": 700},
-  {"do": "click", "selector": "#btn-export-ics", "ms": 1000},
-  {"do": "at", "s": 112.9},
-  {"do": "scrollTo", "selector": "#tab-risk", "ms": 1000, "offset": 90},
-  {"do": "click", "selector": "#tab-risk", "ms": 800},
-  {"do": "at", "s": 116.3},
-  {"do": "move", "selector": "#workers-input", "ms": 900},
-  {"do": "select", "selector": "#workers-input", "value": "1"},
-  {"do": "wait", "ms": 600},
-  {"do": "move", "selector": "#svg-workers", "ms": 1000},
-  {"do": "at", "s": 119.7},
-  {"do": "move", "selector": "#workers-input", "ms": 800},
-  {"do": "select", "selector": "#workers-input", "value": "2"},
-  {"do": "at", "s": 122.0},
-  {"do": "wait", "ms": 1200},
-  {"do": "select", "selector": "#workers-input", "value": "3"},
-  {"do": "wait", "ms": 800},
-  {"do": "move", "selector": "#kpi-util", "ms": 1000},
-  {"do": "at", "s": 128.4},
-  {"do": "scrollTo", "selector": "#risk-samples-body", "ms": 1400, "offset": 230},
-  {"do": "move", "selector": "#risk-samples-body tr:nth-child(1) .absorption-cell", "ms": 900},
-  {"do": "wait", "ms": 2500},
-  {"do": "move", "selector": "#risk-samples-body tr:nth-child(2) .absorption-cell", "ms": 900},
-  {"do": "at", "s": 140.9},
-  {"do": "click", "selector": "#btn-validate-ics", "ms": 900},
-  {"do": "move", "selector": "#ics-validate-result", "ms": 800},
-  {"do": "at", "s": 145.3},
-  {"do": "scrollTo", "selector": "#capybara-easter", "ms": 1200, "offset": 520},
-  {"do": "click", "selector": "#capybara-easter", "ms": 900},
-  {"do": "at", "s": 158.5}
+  {
+    "do": "wait",
+    "ms": 1500
+  },
+  {
+    "do": "move",
+    "selector": "#kpi-crit-count",
+    "ms": 1400
+  },
+  {
+    "do": "wait",
+    "ms": 1500
+  },
+  {
+    "do": "move",
+    "selector": "#svg-dag",
+    "ms": 1600
+  },
+  {
+    "do": "at",
+    "s": 16.7
+  },
+  {
+    "do": "move",
+    "selector": "#preset-select",
+    "ms": 900
+  },
+  {
+    "do": "select",
+    "selector": "#preset-select",
+    "value": "ap-robotics-week"
+  },
+  {
+    "do": "at",
+    "s": 21.52
+  },
+  {
+    "do": "move",
+    "selector": "#kpi-makespan",
+    "ms": 900
+  },
+  {
+    "do": "wait",
+    "ms": 1800
+  },
+  {
+    "do": "move",
+    "selector": "#kpi-crit-count",
+    "ms": 900
+  },
+  {
+    "do": "at",
+    "s": 28.9
+  },
+  {
+    "do": "move",
+    "selector": "#next-action-text",
+    "ms": 1000
+  },
+  {
+    "do": "at",
+    "s": 35.67
+  },
+  {
+    "do": "scrollTo",
+    "selector": "#svg-dag",
+    "ms": 1200,
+    "offset": 110
+  },
+  {
+    "do": "move",
+    "selector": "g.dag-node[data-id=\"A6\"]",
+    "ms": 900
+  },
+  {
+    "do": "at",
+    "s": 43.67
+  },
+  {
+    "do": "click",
+    "selector": "g.dag-node[data-id=\"A5\"]",
+    "ms": 1000
+  },
+  {
+    "do": "wait",
+    "ms": 900
+  },
+  {
+    "do": "scrollTo",
+    "selector": "#inspector-cpm",
+    "ms": 800,
+    "offset": 230
+  },
+  {
+    "do": "move",
+    "selector": "#inspector-title",
+    "ms": 1000
+  },
+  {
+    "do": "move",
+    "selector": "#inspector-cpm",
+    "ms": 900
+  },
+  {
+    "do": "at",
+    "s": 51.31
+  },
+  {
+    "do": "scrollTo",
+    "selector": "#slip-task-select",
+    "ms": 1200,
+    "offset": 150
+  },
+  {
+    "do": "move",
+    "selector": "#slip-task-select",
+    "ms": 700
+  },
+  {
+    "do": "select",
+    "selector": "#slip-task-select",
+    "value": "A5"
+  },
+  {
+    "do": "eval",
+    "js": "(() => { const e = document.getElementById('slip-min-input'); e.value = ''; e.dispatchEvent(new Event('input', { bubbles: true })); })()"
+  },
+  {
+    "do": "type",
+    "selector": "#slip-min-input",
+    "text": "30",
+    "cps": 6
+  },
+  {
+    "do": "at",
+    "s": 52.11
+  },
+  {
+    "do": "move",
+    "selector": "#slip-summary",
+    "ms": 900
+  },
+  {
+    "do": "at",
+    "s": 59.95
+  },
+  {
+    "do": "move",
+    "selector": "#slip-task-select",
+    "ms": 800
+  },
+  {
+    "do": "select",
+    "selector": "#slip-task-select",
+    "value": "A6"
+  },
+  {
+    "do": "at",
+    "s": 65.83
+  },
+  {
+    "do": "move",
+    "selector": "#slip-summary",
+    "ms": 900
+  },
+  {
+    "do": "wait",
+    "ms": 1500
+  },
+  {
+    "do": "move",
+    "selector": "#svg-gantt",
+    "ms": 1200
+  },
+  {
+    "do": "at",
+    "s": 72.43
+  },
+  {
+    "do": "select",
+    "selector": "#slip-task-select",
+    "value": ""
+  },
+  {
+    "do": "at",
+    "s": 75.88
+  },
+  {
+    "do": "scrollTo",
+    "selector": "#policy-compare-strip",
+    "ms": 1200,
+    "offset": 170
+  },
+  {
+    "do": "at",
+    "s": 83.64
+  },
+  {
+    "do": "move",
+    "selector": ".policy-cell:nth-child(1) .policy-metric",
+    "ms": 900
+  },
+  {
+    "do": "wait",
+    "ms": 2500
+  },
+  {
+    "do": "move",
+    "selector": ".policy-cell:nth-child(3) .policy-metric",
+    "ms": 900
+  },
+  {
+    "do": "at",
+    "s": 95.66
+  },
+  {
+    "do": "move",
+    "selector": ".policy-cell:nth-child(2) .policy-metric",
+    "ms": 900
+  },
+  {
+    "do": "wait",
+    "ms": 2000
+  },
+  {
+    "do": "move",
+    "selector": ".policy-cell:nth-child(2) .policy-metric-small:last-child",
+    "ms": 900
+  },
+  {
+    "do": "at",
+    "s": 102.62
+  },
+  {
+    "do": "scrollTo",
+    "selector": "#tab-blocks",
+    "ms": 1100,
+    "offset": 90
+  },
+  {
+    "do": "click",
+    "selector": "#tab-blocks",
+    "ms": 800
+  },
+  {
+    "do": "at",
+    "s": 106.34
+  },
+  {
+    "do": "click",
+    "selector": "#btn-timer-start",
+    "ms": 800
+  },
+  {
+    "do": "move",
+    "selector": "#focus-countdown",
+    "ms": 900
+  },
+  {
+    "do": "wait",
+    "ms": 3500
+  },
+  {
+    "do": "at",
+    "s": 110.46
+  },
+  {
+    "do": "click",
+    "selector": "#btn-timer-complete",
+    "ms": 800
+  },
+  {
+    "do": "at",
+    "s": 114.52
+  },
+  {
+    "do": "click",
+    "selector": "#clock-toggle",
+    "ms": 800
+  },
+  {
+    "do": "wait",
+    "ms": 1800
+  },
+  {
+    "do": "click",
+    "selector": "#clock-toggle",
+    "ms": 500
+  },
+  {
+    "do": "wait",
+    "ms": 700
+  },
+  {
+    "do": "click",
+    "selector": "#btn-export-ics",
+    "ms": 1000
+  },
+  {
+    "do": "at",
+    "s": 120.87
+  },
+  {
+    "do": "scrollTo",
+    "selector": "#tab-risk",
+    "ms": 1000,
+    "offset": 90
+  },
+  {
+    "do": "click",
+    "selector": "#tab-risk",
+    "ms": 800
+  },
+  {
+    "do": "at",
+    "s": 129.69
+  },
+  {
+    "do": "move",
+    "selector": "#workers-input",
+    "ms": 900
+  },
+  {
+    "do": "select",
+    "selector": "#workers-input",
+    "value": "1"
+  },
+  {
+    "do": "wait",
+    "ms": 600
+  },
+  {
+    "do": "move",
+    "selector": "#svg-workers",
+    "ms": 1000
+  },
+  {
+    "do": "at",
+    "s": 138.03
+  },
+  {
+    "do": "move",
+    "selector": "#workers-input",
+    "ms": 800
+  },
+  {
+    "do": "select",
+    "selector": "#workers-input",
+    "value": "2"
+  },
+  {
+    "do": "at",
+    "s": 143.83
+  },
+  {
+    "do": "wait",
+    "ms": 1200
+  },
+  {
+    "do": "select",
+    "selector": "#workers-input",
+    "value": "3"
+  },
+  {
+    "do": "wait",
+    "ms": 800
+  },
+  {
+    "do": "move",
+    "selector": "#kpi-util",
+    "ms": 1000
+  },
+  {
+    "do": "at",
+    "s": 150.43
+  },
+  {
+    "do": "scrollTo",
+    "selector": "#risk-samples-body",
+    "ms": 1400,
+    "offset": 230
+  },
+  {
+    "do": "move",
+    "selector": "#risk-samples-body tr:nth-child(1) .absorption-cell",
+    "ms": 900
+  },
+  {
+    "do": "wait",
+    "ms": 2500
+  },
+  {
+    "do": "move",
+    "selector": "#risk-samples-body tr:nth-child(2) .absorption-cell",
+    "ms": 900
+  },
+  {
+    "do": "at",
+    "s": 157.26
+  },
+  {
+    "do": "click",
+    "selector": "#btn-validate-ics",
+    "ms": 900
+  },
+  {
+    "do": "move",
+    "selector": "#ics-validate-result",
+    "ms": 800
+  },
+  {
+    "do": "at",
+    "s": 161.02
+  },
+  {
+    "do": "scrollTo",
+    "selector": "#capybara-easter",
+    "ms": 1200,
+    "offset": 520
+  },
+  {
+    "do": "click",
+    "selector": "#capybara-easter",
+    "ms": 900
+  },
+  {
+    "do": "at",
+    "s": 165.96
+  }
 ]
