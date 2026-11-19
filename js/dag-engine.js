@@ -859,6 +859,484 @@
     };
   }
 
+  /* ------------------------------------------------------------------ */
+  /* What-if crash advisor, delay shockwave and graph queries              */
+  /* ------------------------------------------------------------------ */
+
+  const CRASH_KINDS = [
+    { kind: "trim10", label: "Trim 10m" },
+    { kind: "trim15", label: "Trim 15m" },
+    { kind: "trim25", label: "Trim 25%" },
+    { kind: "split2", label: "Split across 2 workers" }
+  ];
+  const EPS = 1e-6;
+
+  function slipOf(options) {
+    const slip = options && options.slip;
+    const taskId = slip && slip.taskId ? String(slip.taskId) : "";
+    const slipMin = slip && Number.isFinite(Number(slip.slipMin)) ? Math.max(0, Number(slip.slipMin)) : 0;
+    return taskId && slipMin > 0 ? { taskId, slipMin } : null;
+  }
+
+  // Forward pass over a prepared graph with caller-supplied durations. When
+  // avoidId is set, chains through that task are excluded, which yields the
+  // longest chain that a crash on avoidId cannot shorten.
+  function longestChain(graph, durations, avoidId) {
+    const finish = new Map();
+    const via = new Map();
+    let endId = "";
+    let best = -1;
+    for (const id of graph.topoOrder) {
+      if (id === avoidId) continue;
+      let start = 0;
+      let pred = "";
+      for (const dep of graph.byId.get(id).deps) {
+        if (dep === avoidId) continue;
+        if (finish.get(dep) > start + EPS) { start = finish.get(dep); pred = dep; }
+      }
+      const end = start + durations.get(id);
+      finish.set(id, end);
+      via.set(id, pred);
+      if (end > best + EPS) { best = end; endId = id; }
+    }
+    const chain = [];
+    for (let cur = endId; cur; cur = via.get(cur)) chain.unshift(cur);
+    return { lengthMin: Math.max(0, best), chain };
+  }
+
+  function crashCandidates(task, minDurationMin, splitOverheadMin) {
+    const dur = task.durationMin;
+    const room = dur - minDurationMin;
+    const out = [];
+    const seenCuts = new Set();
+    const addTrim = (kind, wanted) => {
+      const cut = Math.min(wanted, room);
+      if (cut <= EPS || seenCuts.has(cut)) return;
+      seenCuts.add(cut);
+      out.push({ kind, cutMin: cut, toMin: dur - cut });
+    };
+    addTrim("trim10", 10);
+    addTrim("trim15", 15);
+    // 25% rounds to whole minutes so a crash never leaks fractional durations
+    // into float readouts, focus blocks or calendar events.
+    addTrim("trim25", Math.max(1, Math.round(dur * 0.25)));
+    const longHalf = Math.ceil(dur / 2);
+    const shortHalf = dur - longHalf;
+    const toMin = longHalf + splitOverheadMin;
+    if (shortHalf >= 1 && toMin < dur - EPS) {
+      out.push({ kind: "split2", cutMin: dur - toMin, toMin, longHalfMin: toMin, shortHalfMin: shortHalf + splitOverheadMin });
+    }
+    return out;
+  }
+
+  /**
+   * Exhaustive what-if search: every task crossed with every crash move
+   * (trim 10m, trim 15m, trim 25%, split across 2 workers). Each candidate is
+   * re-solved exactly, so savedMin is the true deadline change, including the
+   * case where a secondary chain takes over and caps the saving. A split models
+   * two parallel halves that each carry a fixed handoff overhead.
+   */
+  function adviseCrash(rawTasks, options) {
+    const opts = options || {};
+    const minDurationMin = Math.max(1, numOr(opts.minDurationMin, 5));
+    const splitOverheadMin = Math.max(0, numOr(opts.splitOverheadMin, 5));
+    const slip = slipOf(opts);
+    const graph = validateAndTopoSort(rawTasks);
+    const baseCpm = analyzeCriticalPath(rawTasks, slip);
+    const baselineMin = baseCpm.projectMakespanMin;
+    const criticalBefore = new Set(baseCpm.criticalTaskIds);
+    const slipFor = (id) => (slip && slip.taskId === id ? slip.slipMin : 0);
+    const durations = new Map(graph.tasks.map((t) => [t.id, t.durationMin + slipFor(t.id)]));
+
+    const moves = [];
+    for (const task of graph.tasks) {
+      for (const candidate of crashCandidates(task, minDurationMin, splitOverheadMin)) {
+        const trial = new Map(durations);
+        trial.set(task.id, candidate.toMin + slipFor(task.id));
+        const afterMin = longestChain(graph, trial, "").lengthMin;
+        const savedMin = baselineMin - afterMin;
+        if (savedMin <= EPS) continue;
+        const rival = longestChain(graph, trial, task.id);
+        const rivalSetsDeadline = Math.abs(rival.lengthMin - afterMin) <= EPS;
+        const trialTasks = graph.tasks.map((t) => Object.assign({}, t, {
+          durationMin: t.id === task.id ? candidate.toMin : t.durationMin
+        }));
+        const afterCpm = analyzeCriticalPath(trialTasks, slip);
+        const meta = CRASH_KINDS.find((k) => k.kind === candidate.kind);
+        moves.push({
+          moveId: `${task.id}:${candidate.kind}`,
+          taskId: task.id,
+          title: task.title,
+          kind: candidate.kind,
+          label: meta.label,
+          fromMin: task.durationMin,
+          toMin: candidate.toMin,
+          cutMin: candidate.cutMin,
+          longHalfMin: candidate.longHalfMin,
+          shortHalfMin: candidate.shortHalfMin,
+          beforeMin: baselineMin,
+          afterMin,
+          savedMin,
+          // Minutes of the cut the deadline never sees, because another chain
+          // now sets the finish.
+          lostToRivalMin: candidate.cutMin - savedMin,
+          newlyCriticalIds: afterCpm.criticalTaskIds.filter((id) => !criticalBefore.has(id)),
+          newBottleneck: rivalSetsDeadline ? { chain: rival.chain, lengthMin: rival.lengthMin } : null
+        });
+      }
+    }
+
+    const kindRank = (kind) => CRASH_KINDS.findIndex((k) => k.kind === kind);
+    moves.sort((a, b) => (b.savedMin - a.savedMin)
+      || (a.cutMin - b.cutMin)
+      || (kindRank(a.kind) - kindRank(b.kind))
+      || a.taskId.localeCompare(b.taskId));
+
+    const bestPerTask = [];
+    const seenTasks = new Set();
+    for (const move of moves) {
+      if (seenTasks.has(move.taskId)) continue;
+      seenTasks.add(move.taskId);
+      bestPerTask.push(move);
+    }
+    const pathCount = enumerateCriticalPaths(rawTasks, slip).pathCount;
+    return {
+      baselineMin,
+      minDurationMin,
+      splitOverheadMin,
+      moves,
+      bestPerTask,
+      best: moves[0] || null,
+      criticalPathCount: pathCount,
+      // Equal rival chains are why no single move can help: both must shrink.
+      blockedByTiedChains: moves.length === 0 && pathCount > 1
+    };
+  }
+
+  /**
+   * Applies one advisor move and returns a new task list. A trim shortens the
+   * task. A split replaces it with two parallel halves that inherit its
+   * prerequisites, and every dependent then waits on both halves.
+   */
+  function applyCrashMove(rawTasks, move) {
+    const tasks = cloneTasks(rawTasks);
+    const at = tasks.findIndex((t) => t.id === move.taskId);
+    if (at === -1) throw new Error(`Task ${move.taskId} is not in this plan`);
+    if (move.kind !== "split2") {
+      tasks[at].durationMin = move.toMin;
+      return { tasks, partIds: [] };
+    }
+    const task = tasks[at];
+    const taken = new Set(tasks.map((t) => t.id));
+    const freeId = (suffix) => {
+      let id = `${task.id}${suffix}`;
+      while (taken.has(id)) id += suffix;
+      taken.add(id);
+      return id;
+    };
+    const idA = freeId("a");
+    const idB = freeId("b");
+    const part = (id, name, durationMin) => Object.assign({}, task, {
+      id, title: `${task.title} (${name})`, durationMin, weight: task.weight / 2, deps: task.deps.slice()
+    });
+    tasks.splice(at, 1, part(idA, "part A", move.longHalfMin), part(idB, "part B", move.shortHalfMin));
+    for (const t of tasks) {
+      if (t.deps.indexOf(task.id) === -1) continue;
+      t.deps = t.deps.flatMap((dep) => (dep === task.id ? [idA, idB] : [dep]));
+    }
+    return { tasks, partIds: [idA, idB] };
+  }
+
+  /**
+   * Upstream prerequisites and downstream dependents of one task, each listed
+   * in topological order. An unknown id returns empty sets instead of throwing
+   * so a stale selection can never break rendering.
+   */
+  function graphNeighborhood(rawTasks, taskId) {
+    const graph = validateAndTopoSort(rawTasks);
+    const id = String(taskId);
+    const empty = { id, upstream: [], downstream: [], directUpstream: [], directDownstream: [] };
+    if (!graph.byId.has(id)) return empty;
+    const collect = (start, next) => {
+      const seen = new Set();
+      const stack = next(start).slice();
+      while (stack.length) {
+        const cur = stack.pop();
+        if (seen.has(cur)) continue;
+        seen.add(cur);
+        stack.push(...next(cur));
+      }
+      return graph.topoOrder.filter((t) => seen.has(t));
+    };
+    const preds = (t) => graph.byId.get(t).deps;
+    const succs = (t) => graph.succs.get(t);
+    return {
+      id,
+      upstream: collect(id, preds),
+      downstream: collect(id, succs),
+      directUpstream: preds(id).slice(),
+      directDownstream: succs(id).slice()
+    };
+  }
+
+  /**
+   * Traces one delay through the graph. Every downstream task reports how far
+   * it moved and how many hops from the delayed task it sits, which drives the
+   * shockwave animation. Float absorbs what never reaches the finish.
+   */
+  function traceDelayShockwave(rawTasks, taskId, slipMin) {
+    const id = String(taskId);
+    const minutes = Math.max(0, numOr(slipMin, 0));
+    const before = analyzeCriticalPath(rawTasks);
+    const after = analyzeCriticalPath(rawTasks, { taskId: id, slipMin: minutes });
+    const hops = new Map([[id, 0]]);
+    const queue = before.nodeMap.has(id) ? [id] : [];
+    while (queue.length) {
+      const cur = queue.shift();
+      for (const next of before.nodeMap.get(cur).succs) {
+        if (hops.has(next)) continue;
+        hops.set(next, hops.get(cur) + 1);
+        queue.push(next);
+      }
+    }
+    const affected = [];
+    for (const [nodeId, hop] of hops) {
+      const was = before.nodeMap.get(nodeId);
+      const now = after.nodeMap.get(nodeId);
+      if (!was || !now) continue;
+      const shiftMin = now.efMin - was.efMin;
+      affected.push({
+        id: nodeId,
+        hop,
+        shiftMin,
+        absorbedMin: minutes - shiftMin,
+        becameCritical: now.isCritical && !was.isCritical
+      });
+    }
+    affected.sort((a, b) => (a.hop - b.hop) || a.id.localeCompare(b.id));
+    const finishShiftMin = after.projectMakespanMin - before.projectMakespanMin;
+    return {
+      taskId: id,
+      slipMin: minutes,
+      beforeMin: before.projectMakespanMin,
+      afterMin: after.projectMakespanMin,
+      finishShiftMin,
+      absorbedMin: minutes - finishShiftMin,
+      affected,
+      maxHop: affected.reduce((m, a) => Math.max(m, a.hop), 0),
+      newlyCriticalIds: affected.filter((a) => a.becameCritical).map((a) => a.id)
+    };
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Undo and redo history                                                 */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * Bounded undo and redo over deep-copied plan snapshots. commit() ignores a
+   * change that leaves the snapshot identical, so a control that fires both
+   * input and change events records a single step.
+   */
+  function createHistory(options) {
+    const limit = Math.max(1, Math.floor(numOr(options && options.limit, 100)));
+    const copy = (value) => JSON.parse(JSON.stringify(value));
+    let past = [];
+    let future = [];
+    return {
+      commit(before, after, label) {
+        if (JSON.stringify(before) === JSON.stringify(after)) return false;
+        past.push({ snapshot: copy(before), label: String(label || "Edit") });
+        if (past.length > limit) past.shift();
+        future = [];
+        return true;
+      },
+      undo(current) {
+        const entry = past.pop();
+        if (!entry) return null;
+        future.push({ snapshot: copy(current), label: entry.label });
+        return { snapshot: copy(entry.snapshot), label: entry.label };
+      },
+      redo(current) {
+        const entry = future.pop();
+        if (!entry) return null;
+        past.push({ snapshot: copy(current), label: entry.label });
+        return { snapshot: copy(entry.snapshot), label: entry.label };
+      },
+      canUndo: () => past.length > 0,
+      canRedo: () => future.length > 0,
+      undoLabel: () => (past.length ? past[past.length - 1].label : ""),
+      redoLabel: () => (future.length ? future[future.length - 1].label : ""),
+      depth: () => ({ undo: past.length, redo: future.length }),
+      clear() { past = []; future = []; }
+    };
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Shareable plan links                                                  */
+  /* ------------------------------------------------------------------ */
+
+  const SHARE_LIMITS = Object.freeze({ hashChars: 16000, tasks: 60, titleChars: 120, durationMin: 1440, weight: 100 });
+  const SHARE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,23}$/;
+  const SHARE_CATEGORY = /^[A-Za-z0-9][A-Za-z0-9 &/_-]{0,23}$/;
+  const SHARE_RESERVED_IDS = new Set(["constructor", "prototype", "hasownproperty", "isprototypeof", "tostring", "valueof", "tolocalestring"]);
+  // Control characters, bidirectional overrides and angle brackets never
+  // travel inside a link.
+  const SHARE_TITLE_BLOCKED = /[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩<>]/g;
+  const SHARE_POLICIES = ["wspt", "critical", "shortest"];
+  const SHARE_SETTINGS = [[15, 90, 25], [0, 30, 5], [60, 720, 300], [1, 8, 3]];
+  const B64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+  function bytesToBase64Url(bytes) {
+    let out = "";
+    for (let i = 0; i < bytes.length; i += 3) {
+      const a = bytes[i], b = bytes[i + 1], c = bytes[i + 2];
+      out += B64URL[a >> 2] + B64URL[((a & 3) << 4) | ((b || 0) >> 4)];
+      if (i + 1 < bytes.length) out += B64URL[((b & 15) << 2) | ((c || 0) >> 6)];
+      if (i + 2 < bytes.length) out += B64URL[c & 63];
+    }
+    return out;
+  }
+
+  function base64UrlToBytes(text) {
+    if (text.length % 4 === 1) throw new Error("bad length");
+    const bytes = new Uint8Array(Math.floor((text.length * 3) / 4));
+    let bits = 0, acc = 0, at = 0;
+    for (const ch of text) {
+      const v = B64URL.indexOf(ch);
+      if (v === -1) throw new Error("bad character");
+      acc = (acc << 6) | v;
+      bits += 6;
+      if (bits >= 8) {
+        bits -= 8;
+        bytes[at++] = (acc >> bits) & 255;
+        acc &= (1 << bits) - 1;
+      }
+    }
+    // Canonical form only: leftover padding bits must be zero.
+    if (acc !== 0) throw new Error("bad padding");
+    return bytes;
+  }
+
+  function cleanShareTitle(title, fallback) {
+    const clean = String(title == null ? "" : title).replace(SHARE_TITLE_BLOCKED, "").trim().slice(0, SHARE_LIMITS.titleChars).trim();
+    return clean || fallback;
+  }
+
+  function isShareId(id) {
+    return typeof id === "string" && SHARE_ID.test(id) && !SHARE_RESERVED_IDS.has(id.toLowerCase());
+  }
+
+  function inRange(value, min, max) {
+    return typeof value === "number" && Number.isFinite(value) && value >= min && value <= max;
+  }
+
+  function normalizeShareSettings(settings) {
+    const s = settings || {};
+    const policy = SHARE_POLICIES.indexOf(s.policy) === -1 ? "wspt" : s.policy;
+    const pick = (value, rule) => {
+      const n = Number(value);
+      return Number.isInteger(n) && n >= rule[0] && n <= rule[1] ? n : rule[2];
+    };
+    return [policy, pick(s.focusBlockMin, SHARE_SETTINGS[0]), pick(s.breakMin, SHARE_SETTINGS[1]),
+      pick(s.dayCapacityMin, SHARE_SETTINGS[2]), pick(s.workers, SHARE_SETTINGS[3])];
+  }
+
+  /**
+   * Encodes a plan into a compact "#plan=1.<base64url>" fragment. Dependencies
+   * and completed tasks travel as positional indexes, so the payload has no
+   * object keys at all. Throws when a task cannot be represented safely.
+   */
+  function encodePlanHash(plan) {
+    const source = plan || {};
+    const tasks = validateAndTopoSort(source.tasks).tasks;
+    if (tasks.length > SHARE_LIMITS.tasks) throw new Error(`Share links hold up to ${SHARE_LIMITS.tasks} tasks`);
+    const indexOf = new Map(tasks.map((t, i) => [t.id, i]));
+    const rows = tasks.map((t) => {
+      if (!isShareId(t.id)) throw new Error(`Task id ${t.id} cannot be shared. Use letters, digits, dashes or underscores.`);
+      if (!inRange(t.durationMin, 0.01, SHARE_LIMITS.durationMin)) throw new Error(`Task ${t.id} is too long to share`);
+      if (!inRange(t.weight, 0.01, SHARE_LIMITS.weight)) throw new Error(`Task ${t.id} has a weight too large to share`);
+      const category = SHARE_CATEGORY.test(t.category) ? t.category : "General";
+      return [t.id, cleanShareTitle(t.title, t.id), t.durationMin, t.weight, category, t.deps.map((dep) => indexOf.get(dep))];
+    });
+    const done = (source.doneTaskIds || []).filter((id) => indexOf.has(id)).map((id) => indexOf.get(id));
+    const json = JSON.stringify([1, rows, done, normalizeShareSettings(source.settings)]);
+    const text = `#plan=1.${bytesToBase64Url(new TextEncoder().encode(json))}`;
+    if (text.length > SHARE_LIMITS.hashChars) throw new Error("This plan is too large for a share link");
+    return text;
+  }
+
+  /**
+   * Decodes a share fragment without ever throwing. Every field is checked
+   * against an allowlist and rebuilt into a fresh object, so nothing from the
+   * link can reach an object prototype, a markup sink or the scheduler
+   * unvalidated. Any deviation rejects the whole link.
+   */
+  function decodePlanHash(hash) {
+    const reject = (error) => ({ ok: false, error });
+    if (typeof hash !== "string" || hash.length > SHARE_LIMITS.hashChars) return reject("This share link is too long.");
+    const match = /^#?plan=1\.([A-Za-z0-9_-]+)$/.exec(hash);
+    if (!match) return reject("This share link is not a CadenceDAG plan.");
+    let data;
+    try {
+      data = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(base64UrlToBytes(match[1])));
+    } catch (_err) {
+      return reject("This share link is damaged.");
+    }
+    if (!Array.isArray(data) || data.length !== 4 || data[0] !== 1) return reject("This share link has an unknown format.");
+    const [, rows, doneRaw, settingsRaw] = data;
+    if (!Array.isArray(rows) || rows.length < 1 || rows.length > SHARE_LIMITS.tasks) return reject("This share link has an invalid task count.");
+    const seen = new Set();
+    const tasks = [];
+    for (const row of rows) {
+      if (!Array.isArray(row) || row.length !== 6) return reject("This share link has a malformed task.");
+      const [id, title, durationMin, weight, category, depIdx] = row;
+      if (!isShareId(id) || seen.has(id)) return reject("This share link has an invalid task id.");
+      seen.add(id);
+      if (typeof title !== "string" || !title || title.length > SHARE_LIMITS.titleChars || cleanShareTitle(title, "") !== title) {
+        return reject("This share link has an unsafe task title.");
+      }
+      if (!inRange(durationMin, 0.01, SHARE_LIMITS.durationMin) || !inRange(weight, 0.01, SHARE_LIMITS.weight)) {
+        return reject("This share link has an invalid duration or weight.");
+      }
+      if (typeof category !== "string" || !SHARE_CATEGORY.test(category)) return reject("This share link has an invalid category.");
+      if (!Array.isArray(depIdx) || new Set(depIdx).size !== depIdx.length) return reject("This share link has invalid dependencies.");
+      for (const dep of depIdx) {
+        if (!Number.isInteger(dep) || dep < 0 || dep >= rows.length) return reject("This share link has invalid dependencies.");
+      }
+      tasks.push({ id, title, durationMin, weight, category, deps: depIdx.map((dep) => rows[dep][0]) });
+    }
+    if (!Array.isArray(doneRaw) || new Set(doneRaw).size !== doneRaw.length
+      || doneRaw.some((i) => !Number.isInteger(i) || i < 0 || i >= rows.length)) {
+      return reject("This share link has an invalid completed list.");
+    }
+    if (!Array.isArray(settingsRaw) || settingsRaw.length !== 5 || SHARE_POLICIES.indexOf(settingsRaw[0]) === -1) {
+      return reject("This share link has invalid settings.");
+    }
+    for (let i = 0; i < SHARE_SETTINGS.length; i++) {
+      const v = settingsRaw[i + 1];
+      if (!Number.isInteger(v) || v < SHARE_SETTINGS[i][0] || v > SHARE_SETTINGS[i][1]) return reject("This share link has invalid settings.");
+    }
+    try {
+      validateAndTopoSort(tasks);
+    } catch (err) {
+      return reject(`This share link has an invalid graph: ${err.message}`);
+    }
+    return {
+      ok: true,
+      plan: {
+        tasks,
+        doneTaskIds: doneRaw.map((i) => tasks[i].id),
+        settings: {
+          policy: settingsRaw[0],
+          focusBlockMin: settingsRaw[1],
+          breakMin: settingsRaw[2],
+          dayCapacityMin: settingsRaw[3],
+          workers: settingsRaw[4]
+        }
+      }
+    };
+  }
+
   return {
     PRESET_WORKFLOWS,
     validateAndTopoSort,
@@ -870,6 +1348,14 @@
     scheduleWithWorkers,
     analyzeScheduleRisk,
     validateIcs,
-    planTelemetry
+    planTelemetry,
+    CRASH_KINDS,
+    adviseCrash,
+    applyCrashMove,
+    graphNeighborhood,
+    traceDelayShockwave,
+    createHistory,
+    encodePlanHash,
+    decodePlanHash
   };
 });

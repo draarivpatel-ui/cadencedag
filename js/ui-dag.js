@@ -19,13 +19,15 @@
     work: "#38bdf8",
     selected: "#38bdf8",
     edge: "#475569",
-    grid: "#172131",
-    axis: "#7d8ea5",
-    text: "#e2e8f0",
-    textMuted: "#8a9bb1",
-    nodeFill: "#101a28",
-    nodeFillCrit: "#221520",
-    nodeStroke: "#2b3c54",
+    grid: "#24282e",
+    axis: "#a3abb6",
+    text: "#eceef1",
+    textSoft: "#c9ced6",
+    textMuted: "#a3abb6",
+    nodeFill: "#17191d",
+    nodeFillCrit: "#2a171b",
+    nodeStroke: "#3a3f47",
+    ink: "#0e0f11",
     ghost: "rgba(148, 163, 184, 0.18)",
     idle: "rgba(148, 163, 184, 0.14)",
     lane: "rgba(148, 163, 184, 0.035)"
@@ -101,7 +103,9 @@
   function measureWidth(svg, fallback) {
     let w = 0;
     try {
-      w = Number(svg.clientWidth) || 0;
+      // The scroll frame is the true available width; the svg itself may be
+      // wider than its frame after a previous render.
+      w = Number(svg.parentNode && svg.parentNode.clientWidth) || Number(svg.clientWidth) || 0;
       if (!w && typeof svg.getBoundingClientRect === "function") w = svg.getBoundingClientRect().width || 0;
     } catch (_err) {
       w = 0;
@@ -109,37 +113,90 @@
     return w > 200 ? Math.round(w) : fallback;
   }
 
-  function nodeTooltipText(n) {
-    return `${n.id}: ${n.title} | ES ${n.esMin}m, EF ${n.efMin}m | LS ${n.lsMin}m, LF ${n.lfMin}m | ` +
-      `Total Float ${n.totalFloatMin}m | Free Float ${n.freeFloatMin}m | w/p ${n.wsptRatio.toFixed(2)} (w ${n.weight}, p ${n.effectiveDurationMin}m)`;
+  function measureHeight(svg) {
+    try {
+      return Math.round(Number(svg.parentNode && svg.parentNode.clientHeight) || 0);
+    } catch (_err) {
+      return 0;
+    }
   }
 
-  function renderDagGraph(svg, cpm, selectedId) {
-    if (!svg || typeof document === "undefined") return;
-    clear(svg);
-
-    const nodes = cpm.nodes || [];
+  // Orders each column by the mean row of its prerequisites so edges cross
+  // less. Ties keep critical tasks first, then id order, so layout is stable.
+  function orderLayers(nodes, numCols) {
     const layers = new Map();
     for (const n of nodes) {
       if (!layers.has(n.layer)) layers.set(n.layer, []);
       layers.get(n.layer).push(n);
     }
+    const rowOf = new Map();
+    for (let col = 0; col < numCols; col++) {
+      const colNodes = layers.get(col) || [];
+      const rank = (n) => {
+        const rows = n.deps.map((d) => rowOf.get(d)).filter((r) => r !== undefined);
+        return rows.length ? rows.reduce((a, b) => a + b, 0) / rows.length : Number.MAX_SAFE_INTEGER;
+      };
+      colNodes.sort((a, b) => {
+        const ra = rank(a), rb = rank(b);
+        if (ra !== rb) return ra - rb;
+        if (a.isCritical !== b.isCritical) return a.isCritical ? -1 : 1;
+        return String(a.id).localeCompare(String(b.id));
+      });
+      colNodes.forEach((n, row) => rowOf.set(n.id, row - (colNodes.length - 1) / 2));
+    }
+    return layers;
+  }
 
+  function nodeTooltipText(n) {
+    return `${n.id}: ${n.title} | ES ${n.esMin}m, EF ${n.efMin}m | LS ${n.lsMin}m, LF ${n.lfMin}m | ` +
+      `Total Float ${n.totalFloatMin}m | Free Float ${n.freeFloatMin}m | w/p ${n.wsptRatio.toFixed(2)} (w ${n.weight}, p ${n.effectiveDurationMin}m)`;
+  }
+
+  /**
+   * view is optional: { related, shock, animate }. related is a
+   * graphNeighborhood result that lights the selected task's prerequisites and
+   * dependents. shock is a traceDelayShockwave result, and animate plays the
+   * wave once on the render that introduced it.
+   */
+  function renderDagGraph(svg, cpm, selectedId, view) {
+    if (!svg || typeof document === "undefined") return;
+    clear(svg);
+
+    const nodes = cpm.nodes || [];
     const numCols = Math.max(1, cpm.maxLayer + 1);
+    const layers = orderLayers(nodes, numCols);
+    const opts = view || {};
+    const upstream = new Set(opts.related ? opts.related.upstream : []);
+    const downstream = new Set(opts.related ? opts.related.downstream : []);
+    const hasFocus = Boolean(opts.related && selectedId);
+    const shockById = new Map(opts.shock ? opts.shock.affected.map((a) => [a.id, a]) : []);
+    const relOf = (id) => {
+      if (!hasFocus) return "";
+      if (id === selectedId) return "selected";
+      if (upstream.has(id)) return "upstream";
+      if (downstream.has(id)) return "downstream";
+      return "other";
+    };
     const maxRows = Math.max(1, ...Array.from(layers.values()).map((a) => a.length));
     // Size nodes to the rendered width so text stays near 1:1 scale.
     const targetW = measureWidth(svg, 960);
     const padX = 22;
     const padY = 26;
     const colGap = numCols > 5 ? 34 : 44;
-    const rowGap = 22;
-    const nodeW = Math.max(132, Math.min(196, Math.floor((targetW - padX * 2 - (numCols - 1) * colGap) / numCols)));
     const nodeH = 80;
+    // Rows spread into the available frame height, within a readable range.
+    const frameH = measureHeight(svg);
+    const spareH = frameH - padY * 2 - maxRows * nodeH;
+    const rowGap = maxRows > 1 ? Math.max(22, Math.min(64, Math.floor(spareH / (maxRows - 1)))) : 22;
+    const nodeW = Math.max(132, Math.min(196, Math.floor((targetW - padX * 2 - (numCols - 1) * colGap) / numCols)));
     const titleChars = Math.max(12, Math.floor((nodeW - 22) / 6.4));
 
     const W = Math.max(targetW, padX * 2 + numCols * nodeW + (numCols - 1) * colGap);
-    const H = Math.max(220, padY * 2 + maxRows * nodeH + (maxRows - 1) * rowGap);
+    const H = Math.max(220, measureHeight(svg), padY * 2 + maxRows * nodeH + (maxRows - 1) * rowGap);
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    // Drawn at 1:1 so node text stays readable; the frame scrolls on phones.
+    svg.setAttribute("width", W);
+    svg.setAttribute("height", H);
 
     const defs = el("defs");
     const markerNorm = el("marker", { id: "arr-norm", markerWidth: 8, markerHeight: 8, refX: 7, refY: 4, orient: "auto" });
@@ -176,39 +233,63 @@
         const srcNode = cpm.nodeMap.get(depId);
         if (!src || !dst) continue;
         const critEdge = Boolean(n.isCritical && srcNode && srcNode.isCritical && Math.abs(srcNode.efMin - n.esMin) < 1e-6);
-        edges.push({ src, dst, critEdge });
+        let rel = "";
+        if (hasFocus) {
+          if ((n.id === selectedId || upstream.has(n.id)) && upstream.has(depId)) rel = "upstream";
+          else if ((depId === selectedId || downstream.has(depId)) && downstream.has(n.id)) rel = "downstream";
+          else rel = "other";
+        }
+        const from = shockById.get(depId);
+        const to = shockById.get(n.id);
+        const wave = from && to && from.shiftMin > 0 && to.shiftMin > 0 ? from.hop : -1;
+        edges.push({ src, dst, critEdge, rel, wave });
       }
     }
     edges.sort((a, b) => Number(a.critEdge) - Number(b.critEdge));
-    for (const { src, dst, critEdge } of edges) {
+    for (const { src, dst, critEdge, rel, wave } of edges) {
       const x1 = src.x + nodeW;
       const y1 = src.y + nodeH / 2;
       const x2 = dst.x - 2;
       const y2 = dst.y + nodeH / 2;
       const bend = Math.max(18, (x2 - x1) * 0.5);
-      svg.appendChild(
-        el("path", {
-          d: `M${x1},${y1} C${x1 + bend},${y1} ${x2 - bend},${y2} ${x2},${y2}`,
-          fill: "none",
-          stroke: critEdge ? C.critical : C.edge,
-          "stroke-width": critEdge ? 2.2 : 1.4,
-          "stroke-opacity": critEdge ? 1 : 0.85,
-          "marker-end": critEdge ? "url(#arr-crit)" : "url(#arr-norm)"
-        })
-      );
+      const attrs = {
+        class: "dag-edge",
+        d: `M${x1},${y1} C${x1 + bend},${y1} ${x2 - bend},${y2} ${x2},${y2}`,
+        fill: "none",
+        stroke: critEdge ? C.critical : C.edge,
+        "stroke-width": critEdge ? 2.2 : 1.4,
+        "stroke-opacity": critEdge ? 1 : 0.85,
+        "marker-end": critEdge ? "url(#arr-crit)" : "url(#arr-norm)"
+      };
+      if (rel) attrs["data-rel"] = rel;
+      if (wave >= 0) {
+        attrs["data-wave"] = "1";
+        attrs["data-hop"] = Math.min(wave, 8);
+        if (opts.animate) attrs["data-animate"] = "1";
+      }
+      svg.appendChild(el("path", attrs));
     }
 
     // Draw nodes as instrument cards.
     for (const n of nodes) {
       const p = pos.get(n.id);
       const isSel = n.id === selectedId;
-      const g = el("g", {
+      const shock = shockById.get(n.id);
+      const rel = relOf(n.id);
+      const nodeAttrs = {
         class: "dag-node",
         "data-id": n.id,
         tabindex: "0",
         role: "button",
         "aria-label": `Inspect ${n.id}: ${n.title}`
-      });
+      };
+      if (rel) nodeAttrs["data-rel"] = rel;
+      if (shock) {
+        nodeAttrs["data-shock"] = shock.shiftMin > 0 ? "push" : "absorb";
+        nodeAttrs["data-hop"] = Math.min(shock.hop, 8);
+        if (opts.animate) nodeAttrs["data-animate"] = "1";
+      }
+      const g = el("g", nodeAttrs);
       g.appendChild(el("title", null, nodeTooltipText(n)));
       g.appendChild(
         el("rect", {
@@ -237,10 +318,15 @@
         x: p.x + 13, y: p.y + 19, fill: n.isCritical ? C.criticalText : C.text,
         "font-size": 11.5, "font-weight": 700, class: "svg-mono"
       }, n.id));
+      const pushed = shock && shock.shiftMin > 0;
+      const tag = shock
+        ? (pushed ? `+${shock.shiftMin}m` : "absorbed")
+        : (n.isCritical ? "0m float" : `${n.totalFloatMin}m float`);
       g.appendChild(el("text", {
         x: p.x + nodeW - 11, y: p.y + 19, "text-anchor": "end",
-        fill: n.isCritical ? C.criticalText : C.float, "font-size": 10.5, "font-weight": 600, class: "svg-mono"
-      }, n.isCritical ? "0m float" : `${n.totalFloatMin}m float`));
+        fill: pushed || (!shock && n.isCritical) ? C.criticalText : C.float,
+        "font-size": 10.5, "font-weight": pushed ? 750 : 600, class: "svg-mono"
+      }, tag));
       const lines = wrap(n.title, titleChars, 2);
       lines.forEach((line, i) => {
         g.appendChild(el("text", {
@@ -251,6 +337,24 @@
         x: p.x + 13, y: p.y + nodeH - 11, fill: C.textMuted, "font-size": 10, class: "svg-mono"
       }, `${n.effectiveDurationMin}m  w${n.weight}  ES ${n.esMin}`));
       svg.appendChild(g);
+    }
+
+    // One expanding ring per affected task, staggered by graph distance.
+    if (opts.animate && opts.shock) {
+      const rings = el("g", { class: "shock-layer", "aria-hidden": "true" });
+      for (const a of opts.shock.affected) {
+        const p = pos.get(a.id);
+        if (!p) continue;
+        rings.appendChild(el("circle", {
+          class: "shock-ring",
+          cx: p.x + nodeW / 2, cy: p.y + nodeH / 2, r: 46,
+          fill: "none",
+          stroke: a.shiftMin > 0 ? C.critical : C.float,
+          "stroke-width": 2,
+          "data-hop": Math.min(a.hop, 8)
+        }));
+      }
+      svg.appendChild(rings);
     }
   }
 
@@ -300,7 +404,7 @@
       const y = padT + idx * rowH;
       const cy = y + rowH / 2;
       svg.appendChild(el("text", { x: 24, y: cy + 4, fill: n.isCritical ? C.criticalText : C.text, "font-size": 11, "font-weight": 700, class: "svg-mono" }, n.id));
-      svg.appendChild(el("text", { x: 58, y: cy + 4, fill: "#c3cedb", "font-size": 11 }, clip(n.title, 26)));
+      svg.appendChild(el("text", { x: 58, y: cy + 4, fill: C.textSoft, "font-size": 11 }, clip(n.title, 26)));
 
       // Total float ghost bar [ES, LF]
       if (n.totalFloatMin > 0) {
@@ -330,7 +434,7 @@
       svg.appendChild(bar);
       if (barW >= 34) {
         svg.appendChild(el("text", {
-          x: xOf(n.esMin) + 6, y: cy + 3.5, fill: "#0b1220", "font-size": 9.5, "font-weight": 700, class: "svg-mono", "pointer-events": "none"
+          x: xOf(n.esMin) + 6, y: cy + 3.5, fill: C.ink, "font-size": 9.5, "font-weight": 700, class: "svg-mono", "pointer-events": "none"
         }, `${n.effectiveDurationMin}m`));
       }
       if (n.totalFloatMin > 0 && xOf(n.lfMin) - xOf(n.efMin) >= 44) {
@@ -410,7 +514,7 @@
         svg.appendChild(bar);
         if (barW >= 26) {
           svg.appendChild(el("text", {
-            x: xOf(t.startMin) + 6, y: y + 15, fill: "#0b1220", "font-size": 10, "font-weight": 700, class: "svg-mono", "pointer-events": "none"
+            x: xOf(t.startMin) + 6, y: y + 15, fill: C.ink, "font-size": 10, "font-weight": 700, class: "svg-mono", "pointer-events": "none"
           }, barW >= 70 ? `${t.id} ${t.durationMin}m` : t.id));
         }
         cursor = t.endMin;

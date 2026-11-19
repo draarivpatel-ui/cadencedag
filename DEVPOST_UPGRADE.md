@@ -8,9 +8,9 @@ A Gantt chart can look convincing while hiding exactly which chain of tasks cont
 
 The studio turns an editable task dependency graph into a CPM forward and backward pass, a layered DAG, a slack-aware Gantt, three priority policies, Pomodoro focus blocks and a standards-shaped `.ics` calendar. Four preset workflows ship with the page, including a nine-task AP Exam & Robotics Build Week for high-school students. Any node can be added with a validated form, clicked on the DAG or table, edited inline, marked done, or deleted when it has no downstream dependents. Edits save automatically on the device.
 
-The **Risk & Resources** view enumerates all distinct critical chains, assigns ready tasks to a configurable number of parallel workers, draws a swimlane Gantt with idle gaps, reports utilization and idle minutes, and runs a deterministic one-task-at-a-time delay sweep with worst case, mean impact and slack coverage. Green bars show absorbed slack and rose bars show deadline push. A built-in `.ics` validator reports the structural result on screen, and a diagnostics export writes every count to JSON.
+The **Risk & Workers** view enumerates all distinct critical chains, assigns ready tasks to a configurable number of parallel workers, draws a swimlane Gantt with idle gaps, reports utilization and idle minutes, and runs a deterministic one-task-at-a-time delay sweep with worst case, mean impact and slack coverage. Green bars show absorbed slack and rose bars show deadline push. A built-in `.ics` validator reports the structural result on screen, and a diagnostics export writes every count to JSON.
 
-The **03 Pomodoro Timer** view now runs a live focus timer tied to the computed queue, with Start, Pause, Reset, Complete Block, Skip and Mark Task Done controls, a `MM:SS` countdown, progress bar, and a pure WebAudio chime with no external audio file. Marking a task done recomputes the critical path immediately. A Local/UTC clock toggle and a today-default start date keep the schedule grounded for students.
+The **Focus Timer** view runs a live focus timer tied to the computed queue, with Start, Pause, Reset, Complete Block, Skip and Mark Task Done controls, a `MM:SS` countdown, progress bar, and a pure WebAudio chime with no external audio file. Marking a task done recomputes the critical path immediately. A Local/UTC clock toggle and a today-default start date keep the schedule grounded for students.
 
 A **3-Policy Tradeoff Comparison** strip shows weighted completion, first three tasks and high-priority minutes in the first 120 minutes of work (excluding breaks and day rollover) for WSPT, Critical-First and SPT side by side. The active policy is highlighted so the dropdown always tells a mathematical story. A one line Next Best Focus Action banner names the task to start right now. The Capybara Chief Slack Auditor celebrates finished blocks and zero delayed critical tasks with a pulsing tangerine badge.
 
@@ -39,7 +39,9 @@ Interactive edits introduced a graph-integrity problem: deleting a node with dep
 - Clickable DAG nodes and table rows, inline task editing, guarded delete, Mark Done and localStorage persistence.
 - Fourth high-school preset, Next Best Focus Action banner and reactive Capybara tangerine badge.
 - Four presets, six KPI cards, three risk tables, two extra SVG charts and a diagnostics JSON export.
-- 106 automated tests, up from 13, including cross-preset regressions, timer queue regressions and real HTML wiring checks.
+- What-if crash advisor that re-solves every task against four moves, names the new bottleneck, and applies a move with one click.
+- Delay shockwave, undo and redo, keyboard shortcuts, prerequisite chips, hardened share links and a one-page printable plan.
+- 203 automated tests, up from 13, including brute-force advisor checks, 44 hostile share links, cross-preset regressions and real HTML wiring checks.
 
 ## Verification numbers
 
@@ -49,11 +51,12 @@ Verified on Node v26.8.1 with:
 npm test
 ```
 
-**106 passed, 0 failed, 0 skipped, 0 cancelled.**
+**203 passed, 0 failed, 0 skipped, 0 cancelled.**
 
 | Check | Verified result |
 | --- | --- |
-| Total test count in git history (initial commit to this commit) | 13 to 106 |
+| Total test count in git history (initial commit to this commit) | 13 to 203 |
+| Studio suite (advisor, shockwave, history, share links, shortcuts, XSS sinks) | 97 tests |
 | Critical chain enumeration suites | 5 tests, including a two-way tie |
 | Multi-worker scheduling suites | 7 tests across worker counts 1 to 6, including a CPM-floor regression for every preset and policy |
 | Deterministic risk sweep suites | 5 tests, exact absorption math pinned |
@@ -61,7 +64,7 @@ npm test
 | Phase 2 feature suites | 23 tests, policy comparison, preset, timer, inspector, persistence, swimlanes, HTML escaping |
 | UI contract and DOM runtime suites | 15 tests |
 | QA fix regression suites | 27 tests, timer block durations, preset switch recovery, empty-state persistence, delay propagation, 120 work minutes labeling, break 0 and budget clamping, stale selection recovery, DST anchoring, remaining-plan diagnostics, strict ICS validation and UID escaping, exact-float criticalAfter |
-| JavaScript files passing `node --check` | 3 engine/UI plus 7 test files |
+| JavaScript files passing `node --check` | 3 engine/UI plus 8 test files |
 | Preset workflows with valid generated calendars | 4 of 4 |
 | Preset workflows with verified worker precedence | 4 of 4 across 3 policies |
 | Forbidden em/en dashes and vendor terms in shipped text | 0 |
@@ -79,14 +82,14 @@ Add calendar-client import verification, resource calendars with real availabili
 
 ## November 18 local verification
 
-106 Node tests passed, 0 failed, 0 skipped, 0 cancelled.
+203 Node tests passed, 0 failed, 0 skipped, 0 cancelled.
 
 `npm test` runs `node --test tests/*.test.js`. The explicit file pattern fixes
-Node directory resolution. The suite covers all seven test files.
+Node directory resolution. The suite covers all eight test files.
 Published runtime is not a fixed performance claim.
 
 Verification environment. Node v26.8.1. Visual checks of all four tabs ran in
-a throwaway headless Chrome at 1440x900 and 1920x1080 with zero console
+a real browser at 1440x900, 1920x1080 and 390x844 with zero captured page
 errors. No physical hardware session was run.
 
 The calendar validator checks timestamps inside each event against real

@@ -3,90 +3,328 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
   <title>CadenceDAG | Offline Critical-Path &amp; Pomodoro Planner</title>
-  <meta name="description" content="Offline Critical-Path Method DAG analyzer, WSPT Pomodoro focus scheduler, deadline slippage simulator, and RFC 5545 calendar exporter.">
+  <meta name="description" content="Offline critical path planner with a what-if crash advisor, delay shockwave, Pomodoro focus timer, shareable plan links and RFC 5545 calendar export.">
   <meta name="author" content="Aariv Patel">
   <meta name="color-scheme" content="dark">
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f1722'/%3E%3Ccircle cx='8' cy='16' r='3' fill='%232dd4bf'/%3E%3Ccircle cx='17' cy='9' r='3' fill='%23fb7185'/%3E%3Ccircle cx='25' cy='16' r='3' fill='%23fb7185'/%3E%3C/svg%3E">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2317191d'/%3E%3Ccircle cx='8' cy='16' r='3' fill='%232dd4bf'/%3E%3Ccircle cx='17' cy='9' r='3' fill='%23fb7185'/%3E%3Ccircle cx='25' cy='16' r='3' fill='%23ff9a3d'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header class="site-header">
+  <header class="topbar">
     <div class="brand">
-      <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true">
-        <rect x="0.5" y="0.5" width="31" height="31" rx="8" fill="#0c141f" stroke="#26364b"></rect>
-        <path d="M10.5 14.3 L14.8 10.6 M10.5 17.7 L14.8 21.4 M19.5 10.6 L22.8 14.3" stroke="#5b6b82" stroke-width="1.6" fill="none" stroke-linecap="round"></path>
+      <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+        <rect x="0.5" y="0.5" width="31" height="31" rx="8" fill="#17191d" stroke="#3a3f47"></rect>
+        <path d="M10.5 14.3 L14.8 10.6 M10.5 17.7 L14.8 21.4 M19.5 10.6 L22.8 14.3" stroke="#6b7280" stroke-width="1.6" fill="none" stroke-linecap="round"></path>
         <circle cx="8" cy="16" r="3" fill="#2dd4bf"></circle>
         <circle cx="17" cy="9" r="3" fill="#fb7185"></circle>
         <circle cx="17" cy="23" r="3" fill="#38bdf8"></circle>
-        <circle cx="25" cy="16" r="3" fill="#fb7185"></circle>
+        <circle cx="25" cy="16" r="3" fill="#ff9a3d"></circle>
       </svg>
-      <span class="brand-name">CadenceDAG</span>
+      <h1>CadenceDAG</h1>
     </div>
-    <span class="badge"><i class="badge-dot" aria-hidden="true"></i>Offline | 0 dependencies | RFC 5545</span>
+
+    <div class="plan-picker">
+      <label class="visually-hidden" for="preset-select">Sample plan</label>
+      <select id="preset-select"></select>
+    </div>
+
+    <div class="tool-group" role="group" aria-label="Edit history">
+      <button id="btn-undo" class="icon-btn" type="button" aria-label="Undo" title="Undo" disabled>
+        <svg class="ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 5 3.5 9l4 4M4 9h7.5a4.5 4.5 0 0 1 0 9H9"></path></svg>
+      </button>
+      <button id="btn-redo" class="icon-btn" type="button" aria-label="Redo" title="Redo" disabled>
+        <svg class="ico" viewBox="0 0 20 20" aria-hidden="true"><path d="m12.5 5 4 4-4 4M16 9H8.5a4.5 4.5 0 0 0 0 9H11"></path></svg>
+      </button>
+    </div>
+
+    <div id="timer-pill" class="timer-pill" role="group" aria-label="Focus timer">
+      <button id="pill-toggle" class="pill-toggle" type="button" aria-label="Start focus timer" title="Start or pause (Space)">
+        <svg class="ico ico-play" viewBox="0 0 20 20" aria-hidden="true"><path d="M6 4.2v11.6L15.5 10z"></path></svg>
+        <svg class="ico ico-pause" viewBox="0 0 20 20" aria-hidden="true"><path d="M6.5 4.5v11M13.5 4.5v11"></path></svg>
+      </button>
+      <span id="pill-countdown" class="pill-time mono">25:00</span>
+      <span id="pill-task" class="pill-task">No block loaded</span>
+      <span class="pill-bar" aria-hidden="true"><i id="pill-bar-fill"></i></span>
+    </div>
+
+    <div class="top-actions">
+      <details id="share-menu" class="menu">
+        <summary class="btn">Share</summary>
+        <div class="menu-sheet menu-sheet-end">
+          <button id="btn-share-link" class="menu-item" type="button">Copy plan link</button>
+          <label class="visually-hidden" for="share-url">Plan link</label>
+          <input id="share-url" class="share-url mono" type="text" readonly placeholder="Plan link appears here">
+          <button id="btn-print" class="menu-item" type="button">Print one-page plan</button>
+          <button id="btn-export-ics" class="menu-item" type="button">Export .ics calendar</button>
+          <button id="btn-export-json" class="menu-item" type="button">Export JSON</button>
+          <button id="btn-reset-preset" class="menu-item" type="button">Reset to sample plan</button>
+        </div>
+      </details>
+      <button id="btn-shortcuts" class="icon-btn" type="button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">
+        <svg class="ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M7.4 7.5a2.7 2.7 0 1 1 4.1 2.3c-.9.6-1.5 1.1-1.5 2.2M10 15h.01"></path></svg>
+      </button>
+    </div>
   </header>
 
-  <main class="container">
-    <section class="hero" aria-label="Plan summary">
-      <h1>Plan tasks with <span>dependencies and critical slack</span></h1>
-      <div class="readout-grid kpi-row">
-        <div class="kpi-card kpi-accent-rose">
-          <div class="kpi-label">Critical makespan</div>
-          <div class="kpi-value" id="kpi-makespan">-</div>
-          <div class="kpi-sub" id="kpi-makespan-sub">-</div>
-        </div>
-        <div class="kpi-card kpi-accent-rose">
-          <div class="kpi-label">Critical tasks</div>
-          <div class="kpi-value" id="kpi-crit-count">-</div>
-          <div class="kpi-sub mono" id="kpi-crit-sub">-</div>
-        </div>
-        <div class="kpi-card kpi-accent-teal">
-          <div class="kpi-label">Pomodoro focus blocks</div>
-          <div class="kpi-value" id="kpi-blocks">-</div>
-          <div class="kpi-sub" id="kpi-blocks-sub">-</div>
-        </div>
-        <div class="kpi-card kpi-accent-sky">
-          <div class="kpi-label">Weighted completion</div>
-          <div class="kpi-value" id="kpi-wspt">-</div>
-          <div class="kpi-sub" id="kpi-wspt-sub">-</div>
-        </div>
+  <main class="studio">
+    <section class="readouts" aria-label="Plan summary">
+      <div class="readout readout-lead">
+        <div class="kpi-label">Finish</div>
+        <div class="kpi-value" id="kpi-makespan">-</div>
+        <div class="kpi-sub" id="kpi-makespan-sub">-</div>
+      </div>
+      <div class="readout">
+        <div class="kpi-label">Critical tasks</div>
+        <div class="kpi-value" id="kpi-crit-count">-</div>
+        <div class="kpi-sub mono" id="kpi-crit-sub">-</div>
+      </div>
+      <div class="readout">
+        <div class="kpi-label">Focus blocks</div>
+        <div class="kpi-value" id="kpi-blocks">-</div>
+        <div class="kpi-sub" id="kpi-blocks-sub">-</div>
+      </div>
+      <div class="readout">
+        <div class="kpi-label">Weighted completion</div>
+        <div class="kpi-value" id="kpi-wspt">-</div>
+        <div class="kpi-sub" id="kpi-wspt-sub">-</div>
+      </div>
+      <div id="next-action-banner" class="readout readout-next" role="status" aria-live="polite">
+        <div class="kpi-label">Next best focus</div>
+        <p id="next-action-text" class="next-text">Computing the recommended task right now...</p>
       </div>
     </section>
 
-    <div id="next-action-banner" class="next-action-banner" role="status" aria-live="polite">
-      <svg class="next-action-icon" width="18" height="18" viewBox="0 0 20 20" aria-hidden="true">
-        <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="1.6"></circle>
-        <circle cx="10" cy="10" r="4" fill="none" stroke="currentColor" stroke-width="1.6"></circle>
-        <circle cx="10" cy="10" r="1.4" fill="currentColor"></circle>
-      </svg>
-      <span class="next-action-label">Next best focus</span>
-      <span id="next-action-text">Computing the recommended task right now...</span>
-    </div>
+    <div id="error-banner" class="error-banner" role="alert"></div>
 
-    <div class="tabs" role="tablist" aria-label="CadenceDAG Views">
-      <button class="tab" role="tab" id="tab-dag" aria-selected="true" aria-controls="panel-dag" type="button"><span class="tab-num">01</span> DAG &amp; Slack Gantt</button>
-      <button class="tab" role="tab" id="tab-nodes" aria-selected="false" aria-controls="panel-nodes" type="button"><span class="tab-num">02</span> Node Slack Table</button>
-      <button class="tab" role="tab" id="tab-blocks" aria-selected="false" aria-controls="panel-blocks" type="button"><span class="tab-num">03</span> Pomodoro Timer</button>
-      <button class="tab" role="tab" id="tab-risk" aria-selected="false" aria-controls="panel-risk" type="button"><span class="tab-num">04</span> Risk &amp; Resources</button>
-    </div>
+    <section class="stage" aria-label="Plan workspace">
+      <div class="canvas-card">
+        <div class="canvas-bar">
+          <h2>Dependency graph</h2>
+          <ul class="legend" aria-label="Graph legend">
+            <li><i class="swatch swatch-critical"></i>Critical</li>
+            <li><i class="swatch swatch-float"></i>Has float</li>
+            <li><i class="swatch swatch-up"></i>Prerequisite</li>
+            <li><i class="swatch swatch-down"></i>Dependent</li>
+          </ul>
+          <details id="add-task-menu" class="menu">
+            <summary class="btn btn-primary">Add task</summary>
+            <div class="menu-sheet menu-sheet-end add-sheet">
+              <div class="field">
+                <label for="new-task-title">Title</label>
+                <input id="new-task-title" type="text" maxlength="120" placeholder="Verify final metrics">
+              </div>
+              <div class="field-row">
+                <div class="field">
+                  <label for="new-task-id">Task ID</label>
+                  <input id="new-task-id" type="text" maxlength="24" placeholder="Auto">
+                </div>
+                <div class="field">
+                  <label for="new-task-dur">Minutes</label>
+                  <input id="new-task-dur" type="number" min="1" max="600" value="30">
+                </div>
+                <div class="field">
+                  <label for="new-task-weight">Priority</label>
+                  <input id="new-task-weight" type="number" min="1" max="100" value="8">
+                </div>
+              </div>
+              <div class="field">
+                <span class="field-label" id="new-task-deps-label">Prerequisites</span>
+                <div id="new-task-dep-chips" class="chips" role="group" aria-labelledby="new-task-deps-label"></div>
+                <input id="new-task-deps" type="hidden" value="">
+              </div>
+              <button id="btn-add-task" class="btn btn-primary btn-block" type="button">Add to graph</button>
+            </div>
+          </details>
+        </div>
 
-    <div class="layout-split">
-      <aside class="sidebar">
-        <div class="card">
-          <h2>Workflow &amp; Policy</h2>
+        <div id="dag-frame" class="canvas-frame" tabindex="-1">
+          <svg id="svg-dag" class="dag-svg" viewBox="0 0 800 300" role="group" aria-label="Directed acyclic graph of tasks and critical path"></svg>
+        </div>
+
+        <div class="delay-strip">
+          <div class="delay-fields">
+            <div class="field">
+              <label for="slip-task-select">Delay task</label>
+              <select id="slip-task-select"></select>
+            </div>
+            <div class="field field-min">
+              <label for="slip-min-input">Minutes</label>
+              <input id="slip-min-input" type="number" min="0" max="240" step="5" value="0">
+            </div>
+            <button id="btn-clear-delay" class="btn" type="button">Clear</button>
+          </div>
+          <p id="slip-summary" class="slip-summary" role="status"></p>
+          <div id="capybara-easter" class="capybara-nook" role="button" tabindex="0" data-mood="calm" aria-label="Pet the Capybara Chief Slack Auditor" title="Secret slack mascot">
+            <span class="capy-text">
+              <strong>Capybara Chief Slack Auditor</strong>
+              <span id="capybara-status" role="status">Capybara check: staying calm around 0m float.</span>
+            </span>
+            <span class="capy-stage" aria-hidden="true">
+              <span id="capybara-badge" class="capybara-badge"></span>
+              <span class="capy-burst"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+              <svg class="capy" width="92" height="76" viewBox="0 0 92 76">
+                <g class="capy-body">
+                  <path d="M10 49c0-14 13-23 31-23 8 0 14 1 20 4l10 5c7 4 11 9 11 15 0 8-7 13-16 13H28c-11 0-18-6-18-14z" fill="#94683f"></path>
+                  <path d="M16 57c6 6 16 8 28 8h22c-11-3-29-3-50-8z" fill="#7a5331"></path>
+                  <rect x="20" y="58" width="9" height="15" rx="4.5" fill="#6d4829"></rect>
+                  <rect x="33" y="60" width="9" height="13" rx="4.5" fill="#7a5331"></rect>
+                  <rect x="57" y="60" width="9" height="13" rx="4.5" fill="#7a5331"></rect>
+                  <rect x="69" y="58" width="9" height="15" rx="4.5" fill="#6d4829"></rect>
+                  <path d="M50 35c0-11 9-18 20-18 6 0 11 2 15 6 4 3 6 8 6 13 0 9-7 15-17 15H64c-8 0-14-7-14-16z" fill="#a4764a"></path>
+                  <path d="M76 42c5 0 11-1 15-6 1 7-5 15-15 15-3 0-6-1-8-2 3-3 5-6 8-7z" fill="#8a6039"></path>
+                  <ellipse cx="57" cy="19" rx="5" ry="6" fill="#7a5331"></ellipse>
+                  <ellipse cx="57" cy="20" rx="2.4" ry="3.2" fill="#54361e"></ellipse>
+                  <circle class="capy-eye-open" cx="72" cy="30" r="2.6" fill="#17110b"></circle>
+                  <circle class="capy-eye-open" cx="73" cy="29" r="0.9" fill="#fff4e6"></circle>
+                  <path class="capy-eye-happy" d="M68.5 31c1.4-2.6 5.6-2.6 7 0" fill="none" stroke="#17110b" stroke-width="2" stroke-linecap="round"></path>
+                  <path class="capy-eye-wide" d="M68 27.5c1.5-2 6.5-2 8 0" fill="none" stroke="#17110b" stroke-width="1.6" stroke-linecap="round"></path>
+                  <ellipse cx="87" cy="33" rx="1.5" ry="1.2" fill="#2b1b0e"></ellipse>
+                  <path class="capy-mouth" d="M77 42c3 3 8 3 11 0" fill="none" stroke="#2b1b0e" stroke-width="1.8" stroke-linecap="round"></path>
+                  <circle cx="66" cy="38" r="3" fill="#f2a07b" opacity="0.6"></circle>
+                </g>
+                <g class="capy-tangerine">
+                  <circle cx="69" cy="10" r="8.5" fill="#ff9a3d"></circle>
+                  <circle cx="66" cy="7" r="2.2" fill="#ffc98a"></circle>
+                  <path d="M69 2c1-3 4-4 7-3-1 3-4 4-7 3z" fill="#4ade80"></path>
+                </g>
+              </svg>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <aside class="rail" aria-label="Task tools">
+        <section class="rail-card inspector-card" id="inspector-card" aria-labelledby="inspector-head">
+          <h2 id="inspector-head">Selected task</h2>
           <div class="field">
-            <label for="preset-select">Sample workflow graph</label>
-            <select id="preset-select"></select>
+            <label for="inspector-title">Title</label>
+            <input id="inspector-title" type="text" maxlength="120">
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="inspector-duration">Minutes</label>
+              <input id="inspector-duration" type="number" min="1" max="600">
+            </div>
+            <div class="field">
+              <label for="inspector-weight">Priority</label>
+              <input id="inspector-weight" type="number" min="1" max="100">
+            </div>
           </div>
           <div class="field">
-            <label for="policy-select">Single-worker priority policy</label>
+            <span class="field-label" id="inspector-deps-label">Prerequisites</span>
+            <div id="inspector-dep-chips" class="chips" role="group" aria-labelledby="inspector-deps-label"></div>
+            <input id="inspector-deps" type="hidden" value="">
+          </div>
+          <dl class="relations">
+            <div><dt>Waits on</dt><dd id="inspector-upstream" class="mono">-</dd></div>
+            <div><dt>Unlocks</dt><dd id="inspector-downstream" class="mono">-</dd></div>
+          </dl>
+          <p class="readout-line"><span class="visually-hidden">Schedule readout </span><span id="inspector-cpm" class="inspector-cpm mono" role="status" aria-live="polite">-</span></p>
+          <div class="btn-row">
+            <button id="btn-save-task" class="btn btn-primary btn-save" type="button">Save edits</button>
+            <button id="btn-shock" class="btn btn-shock" type="button">+15m delay shockwave</button>
+            <button id="btn-toggle-done" class="btn" type="button">Mark Done</button>
+            <button id="btn-delete-task" class="btn btn-quiet" type="button">Delete</button>
+          </div>
+          <p id="inspector-status" class="status-line" role="status">Click any graph node to inspect it.</p>
+        </section>
+
+        <section class="rail-card advisor-card" id="advisor-card" aria-labelledby="advisor-head">
+          <h2 id="advisor-head">Crash advisor</h2>
+          <div id="advisor-lens" class="lens" role="group" aria-label="Crash move">
+            <button class="lens-btn" type="button" data-lens="all" aria-pressed="true">Best</button>
+            <button class="lens-btn" type="button" data-lens="trim10" aria-pressed="false">10m</button>
+            <button class="lens-btn" type="button" data-lens="trim15" aria-pressed="false">15m</button>
+            <button class="lens-btn" type="button" data-lens="trim25" aria-pressed="false">25%</button>
+            <button class="lens-btn" type="button" data-lens="split2" aria-pressed="false">Split</button>
+          </div>
+          <ol id="advisor-list" class="advisor-list"></ol>
+        </section>
+      </aside>
+    </section>
+
+    <div class="tabs" role="tablist" aria-label="CadenceDAG views">
+      <button class="tab" role="tab" id="tab-dag" aria-selected="true" aria-controls="panel-dag" type="button">Timeline &amp; Policies</button>
+      <button class="tab" role="tab" id="tab-nodes" aria-selected="false" aria-controls="panel-nodes" type="button" tabindex="-1">Slack Table</button>
+      <button class="tab" role="tab" id="tab-blocks" aria-selected="false" aria-controls="panel-blocks" type="button" tabindex="-1">Focus Timer</button>
+      <button class="tab" role="tab" id="tab-risk" aria-selected="false" aria-controls="panel-risk" type="button" tabindex="-1">Risk &amp; Workers</button>
+    </div>
+
+    <div id="panel-dag" class="panel is-active" role="tabpanel" aria-labelledby="tab-dag">
+      <div class="card">
+        <h2>Slack-aware Gantt</h2>
+        <div class="chart-scroll"><svg id="svg-gantt" class="chart-svg" viewBox="0 0 800 280" role="img" aria-label="Critical path Gantt chart with slack bands"></svg></div>
+        <ul class="legend legend-below" aria-label="Gantt chart legend">
+          <li><i class="swatch swatch-critical"></i>Critical path (0m float)</li>
+          <li><i class="swatch swatch-float"></i>Float task</li>
+          <li><i class="swatch swatch-ghost"></i>Total float window</li>
+        </ul>
+      </div>
+      <div class="card policy-compare-card">
+        <div class="card-head">
+          <h2>Policy tradeoffs</h2>
+          <div class="field field-inline">
+            <label for="policy-select">Active policy</label>
             <select id="policy-select">
               <option value="wspt">WSPT (highest weight / duration)</option>
               <option value="critical">Critical-First (min total float)</option>
               <option value="shortest">SPT (shortest task first)</option>
             </select>
           </div>
-          <div class="field-grid">
+        </div>
+        <div id="policy-compare-strip" class="policy-strip" role="status" aria-live="polite"></div>
+        <p class="footnote">Weighted completion sums weight times finish time, so lower is better. High-priority minutes count weight 8+ work finished in the first 120 minutes of work (excluding breaks and day rollover).</p>
+      </div>
+    </div>
+
+    <div id="panel-nodes" class="panel" role="tabpanel" aria-labelledby="tab-nodes">
+      <div class="card">
+        <h2>Forward and backward pass</h2>
+        <div class="table-wrap">
+          <table>
+            <caption class="visually-hidden">Critical path metrics for each task</caption>
+            <thead>
+              <tr><th>ID</th><th>Task</th><th class="num">Dur</th><th>Window [ES, EF]</th><th class="num">Total Float</th><th class="num">Free Float</th><th class="num">WSPT w/p</th><th>Path</th></tr>
+            </thead>
+            <tbody id="slack-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="panel-blocks" class="panel" role="tabpanel" aria-labelledby="tab-blocks">
+      <div class="card focus-card">
+        <div class="card-head">
+          <h2>Focus timer</h2>
+          <div class="clock-group">
+            <span id="clock-readout" class="mono clock-readout" role="status" aria-live="off"></span>
+            <button id="clock-toggle" class="btn btn-small" type="button">Clock: Local</button>
+          </div>
+        </div>
+        <div class="cockpit">
+          <div class="cockpit-dial">
+            <svg class="focus-ring" viewBox="0 0 120 120" aria-hidden="true">
+              <circle cx="60" cy="60" r="52" class="focus-ring-track"></circle>
+              <circle id="focus-ring-arc" cx="60" cy="60" r="52" class="focus-ring-arc" stroke-dasharray="326.73" stroke-dashoffset="0"></circle>
+            </svg>
+            <span id="focus-countdown" class="focus-countdown mono">25:00</span>
+          </div>
+          <div class="cockpit-main">
+            <span id="focus-task-label" class="focus-task-label">No block loaded</span>
+            <div class="focus-progress" aria-hidden="true"><div id="focus-progress-fill" class="focus-progress-fill"></div></div>
+            <p id="focus-progress-text" class="focus-progress-text" role="status">0 / 0 blocks completed</p>
+            <div class="btn-row">
+              <button id="btn-timer-start" class="btn btn-primary" type="button">Start</button>
+              <button id="btn-timer-pause" class="btn" type="button">Pause</button>
+              <button id="btn-timer-reset" class="btn" type="button">Reset</button>
+              <button id="btn-timer-complete" class="btn" type="button">Complete Block</button>
+              <button id="btn-timer-skip" class="btn btn-quiet" type="button">Skip</button>
+              <button id="btn-mark-done" class="btn btn-quiet" type="button">Mark Task Done</button>
+            </div>
+          </div>
+          <div class="cockpit-settings">
             <div class="field">
               <label for="focus-min-input">Focus block (min)</label>
               <input id="focus-min-input" type="number" min="15" max="90" value="25">
@@ -103,278 +341,126 @@
               <label for="start-date-input">Start date</label>
               <input id="start-date-input" type="date" value="">
             </div>
-            <div class="field">
-              <label for="workers-input">Parallel workers</label>
+          </div>
+        </div>
+        <p id="focus-status" class="status-line" role="status">Start a block from the active queue. Completing blocks keeps the plan; marking a task done recomputes the live critical path.</p>
+      </div>
+      <div class="card">
+        <h2>Scheduled focus blocks</h2>
+        <div class="table-wrap">
+          <table class="blocks-table">
+            <caption class="visually-hidden">Scheduled focus blocks in calendar order</caption>
+            <thead>
+              <tr><th>Block</th><th>Day</th><th id="block-window-head">Local Window</th><th>Slice</th><th>Task</th><th>Priority</th></tr>
+            </thead>
+            <tbody id="blocks-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="panel-risk" class="panel" role="tabpanel" aria-labelledby="tab-risk">
+      <div class="card">
+        <div class="card-head">
+          <h2>Schedule risk</h2>
+          <div class="field-row field-row-tight">
+            <div class="field field-inline">
+              <label for="workers-input">Workers</label>
               <input id="workers-input" type="number" min="1" max="8" step="1" value="3">
             </div>
-            <div class="field">
+            <div class="field field-inline">
               <label for="risk-delay-input">Risk delay (min)</label>
               <input id="risk-delay-input" type="number" min="0" max="240" step="5" value="10">
             </div>
           </div>
-          <div class="btn-row">
-            <button id="btn-export-ics" class="btn btn-primary" type="button">Export .ics Calendar</button>
-            <button id="btn-export-json" class="btn" type="button">Export JSON</button>
-          </div>
         </div>
-
-        <div class="card inspector-card" id="inspector-card">
-          <h2>Selected Task Inspector</h2>
-          <div class="field">
-            <label for="inspector-title">Title</label>
-            <input id="inspector-title" type="text">
-          </div>
-          <div class="field-grid">
-            <div class="field">
-              <label for="inspector-duration">Duration (min)</label>
-              <input id="inspector-duration" type="number" min="1" max="600">
-            </div>
-            <div class="field">
-              <label for="inspector-weight">Priority weight</label>
-              <input id="inspector-weight" type="number" min="1" max="100">
-            </div>
-          </div>
-          <div class="field">
-            <label for="inspector-deps">Dependencies (comma IDs)</label>
-            <input id="inspector-deps" type="text">
-          </div>
-          <div class="inspector-cpm-row">
-            <span class="inspector-cpm-label">Schedule readout</span>
-            <span id="inspector-cpm" class="inspector-cpm mono" role="status" aria-live="polite">-</span>
-          </div>
-          <div class="btn-row">
-            <button id="btn-save-task" class="btn btn-primary" type="button">Save Edits</button>
-            <button id="btn-toggle-done" class="btn" type="button">Mark Done</button>
-            <button id="btn-delete-task" class="btn btn-quiet" type="button">Delete Task</button>
-            <button id="btn-reset-preset" class="btn btn-quiet" type="button">Reset Preset</button>
-          </div>
-          <p id="inspector-status" class="status-line" role="status">Click any DAG node or table row to inspect it.</p>
+        <div class="risk-grid">
+          <div class="readout"><div class="kpi-label">Distinct critical paths</div><div class="kpi-value" id="kpi-paths">-</div><div class="kpi-sub" id="kpi-paths-sub">-</div></div>
+          <div class="readout"><div class="kpi-label">Parallel makespan</div><div class="kpi-value" id="kpi-parallel">-</div><div class="kpi-sub" id="kpi-parallel-sub">-</div></div>
+          <div class="readout"><div class="kpi-label">Worker utilization</div><div class="kpi-value" id="kpi-util">-</div><div class="kpi-sub" id="kpi-util-sub">-</div></div>
+          <div class="readout"><div class="kpi-label">Slack coverage</div><div class="kpi-value" id="kpi-slack">-</div><div class="kpi-sub" id="kpi-slack-sub">-</div></div>
+          <div class="readout"><div class="kpi-label">Worst case makespan</div><div class="kpi-value" id="kpi-worst">-</div><div class="kpi-sub" id="kpi-worst-sub">-</div></div>
+          <div class="readout"><div class="kpi-label">Mean delay impact</div><div class="kpi-value" id="kpi-mean-delay">-</div><div class="kpi-sub" id="kpi-mean-delay-sub">-</div></div>
         </div>
-
+      </div>
+      <div class="card">
+        <h2>Worker swimlanes</h2>
+        <div class="chart-scroll"><svg id="svg-workers" class="chart-svg" viewBox="0 0 800 200" role="img" aria-label="Parallel worker swimlane Gantt chart"></svg></div>
+        <ul class="legend legend-below" aria-label="Swimlane legend">
+          <li><i class="swatch swatch-critical"></i>Critical-path task</li>
+          <li><i class="swatch swatch-work"></i>Other assigned work</li>
+          <li><i class="swatch swatch-ghost"></i>Idle gap</li>
+        </ul>
+      </div>
+      <div class="card-pair">
         <div class="card">
-          <h2>Add Dependency Task</h2>
-          <div class="field-grid">
-            <div class="field">
-              <label for="new-task-id">Task ID</label>
-              <input id="new-task-id" type="text" placeholder="T10">
-            </div>
-            <div class="field">
-              <label for="new-task-dur">Duration (m)</label>
-              <input id="new-task-dur" type="number" min="5" value="30">
-            </div>
-          </div>
-          <div class="field">
-            <label for="new-task-title">Title</label>
-            <input id="new-task-title" type="text" placeholder="Verify final metrics">
-          </div>
-          <div class="field-grid field-grid-12">
-            <div class="field">
-              <label for="new-task-weight">Priority (1-10)</label>
-              <input id="new-task-weight" type="number" min="1" max="10" value="8">
-            </div>
-            <div class="field">
-              <label for="new-task-deps">Upstream IDs (comma)</label>
-              <input id="new-task-deps" type="text" placeholder="T6, T7">
-            </div>
-          </div>
-          <button id="btn-add-task" class="btn btn-block" type="button">Validate &amp; Add Node</button>
-          <div id="error-banner" class="error-banner" role="alert"></div>
-        </div>
-      </aside>
-
-      <section class="workspace">
-        <div id="panel-dag" class="panel is-active" role="tabpanel" aria-labelledby="tab-dag">
-          <div class="card">
-            <h2>Topological Dependency DAG</h2>
-            <svg id="svg-dag" class="chart-svg" viewBox="0 0 800 300" role="img" aria-label="Directed acyclic graph of tasks and critical path"></svg>
-            <div class="gantt-legend" aria-label="DAG legend">
-              <span><i class="legend-swatch legend-critical"></i> Critical path (0m float)</span>
-              <span><i class="legend-swatch legend-float"></i> Has float</span>
-              <span><i class="legend-swatch legend-selected"></i> Selected in inspector</span>
-            </div>
-          </div>
-          <div class="card policy-compare-card">
-            <h2>3-Policy Tradeoff Comparison</h2>
-            <div id="policy-compare-strip" class="policy-strip" role="status" aria-live="polite"></div>
-            <p class="footnote">Weighted completion sums weight times finish time, so lower is better. High-priority minutes count weight 8+ work finished in the first 120 minutes of work (excluding breaks and day rollover).</p>
-          </div>
-          <div class="card">
-            <h2>Slack-Aware Gantt &amp; Delay Simulator</h2>
-            <div class="slip-controls">
-              <div class="field">
-                <label for="slip-task-select">Test delay on task</label>
-                <select id="slip-task-select"></select>
-              </div>
-              <div class="field">
-                <label for="slip-min-input">Delay added (min)</label>
-                <input id="slip-min-input" type="number" min="0" max="240" step="10" value="0">
-              </div>
-            </div>
-            <p id="slip-summary" class="slip-summary"></p>
-            <svg id="svg-gantt" class="chart-svg" viewBox="0 0 800 280" role="img" aria-label="Critical path Gantt chart with slack bands"></svg>
-            <div class="gantt-legend" aria-label="Gantt chart legend">
-              <span><i class="legend-swatch legend-critical"></i> Critical path (0m float)</span>
-              <span><i class="legend-swatch legend-float"></i> Float task</span>
-              <span><i class="legend-swatch legend-ghost"></i> Total float window</span>
-              <span class="legend-hint">Hover any node or bar for ES, EF, LS, LF, float and w/p.</span>
-            </div>
+          <h2>Critical chains</h2>
+          <div class="table-wrap">
+            <table>
+              <caption class="visually-hidden">Enumerated longest dependency chains</caption>
+              <thead><tr><th>#</th><th>Chain</th><th class="num">Length</th></tr></thead>
+              <tbody id="critical-paths-body"></tbody>
+            </table>
           </div>
         </div>
-
-        <div id="panel-nodes" class="panel" role="tabpanel" aria-labelledby="tab-nodes">
-          <div class="card">
-            <h2>CPM Forward/Backward Pass Metrics</h2>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr><th>ID</th><th>Task</th><th class="num">Dur</th><th>Window [ES, EF]</th><th class="num">Total Float</th><th class="num">Free Float</th><th class="num">WSPT w/p</th><th>Path</th></tr>
-                </thead>
-                <tbody id="slack-table-body"></tbody>
-              </table>
-            </div>
+        <div class="card">
+          <h2>Worker ledger</h2>
+          <div class="table-wrap">
+            <table>
+              <caption class="visually-hidden">Tasks assigned to each parallel worker</caption>
+              <thead><tr><th>Worker</th><th>Tasks</th><th class="num">Busy</th><th>Window</th></tr></thead>
+              <tbody id="worker-ledger-body"></tbody>
+            </table>
           </div>
         </div>
-
-        <div id="panel-blocks" class="panel" role="tabpanel" aria-labelledby="tab-blocks">
-          <div class="card focus-card">
-            <div class="focus-head">
-              <h2>Active Focus Block Timer</h2>
-              <div class="clock-group">
-                <span id="clock-readout" class="mono clock-readout" role="status" aria-live="off"></span>
-                <button id="clock-toggle" class="btn btn-small" type="button">Clock: Local</button>
-              </div>
-            </div>
-            <div class="cockpit">
-              <div class="cockpit-dial">
-                <svg class="focus-ring" viewBox="0 0 120 120" aria-hidden="true">
-                  <circle cx="60" cy="60" r="52" class="focus-ring-track"></circle>
-                  <circle id="focus-ring-arc" cx="60" cy="60" r="52" class="focus-ring-arc" stroke-dasharray="326.73" stroke-dashoffset="0"></circle>
-                </svg>
-                <span id="focus-countdown" class="focus-countdown mono">25:00</span>
-              </div>
-              <div class="cockpit-main">
-                <span id="focus-task-label" class="focus-task-label">No block loaded</span>
-                <div class="focus-progress" aria-hidden="true"><div id="focus-progress-fill" class="focus-progress-fill"></div></div>
-                <p id="focus-progress-text" class="focus-progress-text" role="status">0 / 0 blocks completed</p>
-                <div class="btn-row cockpit-buttons">
-                  <button id="btn-timer-start" class="btn btn-primary" type="button">Start</button>
-                  <button id="btn-timer-pause" class="btn" type="button">Pause</button>
-                  <button id="btn-timer-reset" class="btn" type="button">Reset</button>
-                  <button id="btn-timer-complete" class="btn btn-accent" type="button">Complete Block</button>
-                  <button id="btn-timer-skip" class="btn btn-quiet" type="button">Skip</button>
-                  <button id="btn-mark-done" class="btn btn-quiet" type="button">Mark Task Done</button>
-                </div>
-              </div>
-            </div>
-            <p id="focus-status" class="status-line" role="status">Start a block from the active queue. Completing blocks keeps the plan; marking a task done recomputes the live critical path.</p>
-          </div>
-          <div class="card">
-            <h2>Scheduled Focus Blocks (.ics Ready)</h2>
-            <div class="table-wrap">
-              <table class="blocks-table">
-                <thead>
-                  <tr><th>Block</th><th>Day</th><th id="block-window-head">Local Window</th><th>Slice</th><th>Task</th><th>Priority</th></tr>
-                </thead>
-                <tbody id="blocks-table-body"></tbody>
-              </table>
-            </div>
-          </div>
+      </div>
+      <div class="card">
+        <h2>Delay sweep</h2>
+        <div class="table-wrap">
+          <table class="sweep-table">
+            <caption class="visually-hidden">Per task delay absorption and deadline impact</caption>
+            <thead><tr><th>Task</th><th class="num">Float</th><th class="num">Absorbed</th><th class="num">Makespan</th><th>Delta</th><th>Absorbed vs Pushed</th></tr></thead>
+            <tbody id="risk-samples-body"></tbody>
+          </table>
         </div>
-
-        <div id="panel-risk" class="panel" role="tabpanel" aria-labelledby="tab-risk">
-          <div class="card">
-            <h2>Critical Path &amp; Schedule Risk</h2>
-            <div class="readout-grid risk-grid">
-              <div class="kpi-card"><div class="kpi-label">Distinct critical paths</div><div class="kpi-value" id="kpi-paths">-</div><div class="kpi-sub" id="kpi-paths-sub">-</div></div>
-              <div class="kpi-card"><div class="kpi-label">Parallel makespan</div><div class="kpi-value" id="kpi-parallel">-</div><div class="kpi-sub" id="kpi-parallel-sub">-</div></div>
-              <div class="kpi-card"><div class="kpi-label">Worker utilization</div><div class="kpi-value" id="kpi-util">-</div><div class="kpi-sub" id="kpi-util-sub">-</div></div>
-              <div class="kpi-card"><div class="kpi-label">Slack coverage</div><div class="kpi-value" id="kpi-slack">-</div><div class="kpi-sub" id="kpi-slack-sub">-</div></div>
-              <div class="kpi-card"><div class="kpi-label">Worst case makespan</div><div class="kpi-value" id="kpi-worst">-</div><div class="kpi-sub" id="kpi-worst-sub">-</div></div>
-              <div class="kpi-card"><div class="kpi-label">Mean delay impact</div><div class="kpi-value" id="kpi-mean-delay">-</div><div class="kpi-sub" id="kpi-mean-delay-sub">-</div></div>
-            </div>
-          </div>
-          <div class="card">
-            <h2>Parallel Worker Swimlane Gantt</h2>
-            <svg id="svg-workers" class="chart-svg" viewBox="0 0 800 200" role="img" aria-label="Parallel worker swimlane Gantt chart"></svg>
-            <div class="gantt-legend" aria-label="Swimlane legend">
-              <span><i class="legend-swatch legend-critical"></i> Critical-path task</span>
-              <span><i class="legend-swatch legend-work"></i> Other assigned work</span>
-              <span><i class="legend-swatch legend-ghost"></i> Idle gap</span>
-              <span class="legend-hint">Hover a bar for its exact window.</span>
-            </div>
-          </div>
-          <div class="card-pair">
-            <div class="card">
-              <h2>Critical Chains</h2>
-              <div class="table-wrap">
-                <table>
-                  <caption class="visually-hidden">Enumerated longest dependency chains</caption>
-                  <thead><tr><th>#</th><th>Chain</th><th class="num">Length</th></tr></thead>
-                  <tbody id="critical-paths-body"></tbody>
-                </table>
-              </div>
-            </div>
-            <div class="card">
-              <h2>Parallel Worker Ledger</h2>
-              <div class="table-wrap">
-                <table>
-                  <caption class="visually-hidden">Tasks assigned to each parallel worker</caption>
-                  <thead><tr><th>Worker</th><th>Tasks</th><th class="num">Busy</th><th>Window</th></tr></thead>
-                  <tbody id="worker-ledger-body"></tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-          <div class="card">
-            <h2>Delay Sweep Samples</h2>
-            <div class="table-wrap">
-              <table class="sweep-table">
-                <caption class="visually-hidden">Per task delay absorption and deadline impact</caption>
-                <thead><tr><th>Task</th><th class="num">Float</th><th class="num">Absorbed</th><th class="num">Makespan</th><th>Delta</th><th>Absorbed vs Pushed</th></tr></thead>
-                <tbody id="risk-samples-body"></tbody>
-              </table>
-            </div>
-            <div class="gantt-legend" aria-label="Delay sweep legend">
-              <span><i class="legend-swatch legend-float"></i> Absorbed by slack</span>
-              <span><i class="legend-swatch legend-critical"></i> Pushed the deadline</span>
-            </div>
-            <div class="btn-row">
-              <button id="btn-export-telemetry" class="btn" type="button">Export Diagnostics JSON</button>
-              <button id="btn-validate-ics" class="btn" type="button">Validate .ics Structure</button>
-            </div>
-            <p id="ics-validate-result" class="status-line ics-result" role="status"></p>
-          </div>
+        <ul class="legend legend-below" aria-label="Delay sweep legend">
+          <li><i class="swatch swatch-float"></i>Absorbed by slack</li>
+          <li><i class="swatch swatch-critical"></i>Pushed the deadline</li>
+        </ul>
+        <div class="btn-row">
+          <button id="btn-export-telemetry" class="btn" type="button">Export Diagnostics JSON</button>
+          <button id="btn-validate-ics" class="btn" type="button">Validate .ics Structure</button>
         </div>
-
-        <div id="capybara-easter" class="capybara-nook" role="button" tabindex="0" title="Secret slack mascot">
-          <span id="capybara-badge" class="capybara-badge" aria-hidden="true"></span>
-          <svg class="capy" width="104" height="84" viewBox="0 0 64 52" aria-hidden="true">
-            <g class="capy-body">
-              <ellipse cx="30" cy="35" rx="22" ry="12" fill="#8c6239"></ellipse>
-              <rect x="15" y="42" width="5" height="8" rx="2.5" fill="#6f4724"></rect>
-              <rect x="37" y="42" width="5" height="8" rx="2.5" fill="#6f4724"></rect>
-              <circle cx="47" cy="27" r="10" fill="#9b6e44"></circle>
-              <ellipse cx="54" cy="30" rx="6" ry="4.5" fill="#7a5130"></ellipse>
-              <circle cx="56.5" cy="28.6" r="1" fill="#2a1a0e"></circle>
-              <circle cx="48" cy="24.5" r="1.6" fill="#0f1722"></circle>
-              <path d="M50.2 32.6 Q53.8 36.4 57.4 32.8" fill="none" stroke="#2a1a0e" stroke-width="1.6" stroke-linecap="round"></path>
-              <circle cx="45.5" cy="29.5" r="2" fill="#f2a07b" opacity="0.55"></circle>
-              <ellipse cx="41.5" cy="18.5" rx="2.6" ry="3.4" fill="#7a5130"></ellipse>
-            </g>
-            <g class="capy-tangerine">
-              <circle cx="47" cy="11" r="6" fill="#f59e0b"></circle>
-              <circle cx="45" cy="9" r="1.6" fill="#fcd34d" opacity="0.8"></circle>
-              <path d="M47 5 q2 -3 5 -2.5 q-2 2 -5 2.5z" fill="#22c55e"></path>
-            </g>
-          </svg>
-          <span class="capy-text">
-            <strong>Capybara Chief Slack Auditor</strong>
-            <span id="capybara-status">Capybara check: staying calm around 0m float.</span>
-          </span>
-        </div>
-      </section>
+        <p id="ics-validate-result" class="status-line ics-result" role="status"></p>
+      </div>
     </div>
   </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite">
+    <span id="toast-text"></span>
+    <button id="toast-undo" class="toast-undo" type="button">Undo</button>
+  </div>
+
+  <dialog id="shortcut-dialog" class="shortcut-dialog" aria-labelledby="shortcut-head">
+    <h2 id="shortcut-head">Keyboard shortcuts</h2>
+    <dl class="shortcut-list">
+      <div><dt><kbd>Cmd</kbd> or <kbd>Ctrl</kbd> <kbd>Z</kbd></dt><dd>Undo</dd></div>
+      <div><dt><kbd>Cmd</kbd> or <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Z</kbd></dt><dd>Redo</dd></div>
+      <div><dt><kbd>Space</kbd></dt><dd>Start or pause the focus timer</dd></div>
+      <div><dt><kbd>?</kbd></dt><dd>Show this list</dd></div>
+      <div><dt><kbd>Esc</kbd></dt><dd>Close menus and this list</dd></div>
+    </dl>
+    <button id="btn-shortcuts-close" class="btn" type="button">Close</button>
+  </dialog>
+
+  <section id="print-plan" class="print-plan" aria-hidden="true">
+    <h2 id="print-title">CadenceDAG plan</h2>
+    <p id="print-summary"></p>
+    <table>
+      <thead><tr><th>Done</th><th>Order</th><th>Task</th><th>Starts</th><th>Minutes</th><th>Float</th><th>Path</th></tr></thead>
+      <tbody id="print-body"></tbody>
+    </table>
+  </section>
 
   <script src="js/dag-engine.js"></script>
   <script src="js/ui-dag.js"></script>

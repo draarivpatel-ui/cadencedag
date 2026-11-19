@@ -55,10 +55,32 @@
       focus: { index: 0, completed: 0, remainingSec: 25 * 60, running: false, intervalId: null, blockKey: null, exhausted: false },
       keyboardSelection: null,
       clockMode: "local",
-      capyCelebration: false
+      capyCelebration: false,
+      advisorLens: "all",
+      shockPulse: false,
+      // Prerequisite and dependent highlights appear once someone clicks a
+      // node, so the first view of the graph leads with the critical path.
+      showRelations: false
     };
 
     const $ = (id) => d.getElementById(id);
+    const history = Engine.createHistory({ limit: 100 });
+    // The slip the undo stack last saw, so a burst of typed delay minutes
+    // lands as one undo step.
+    let slipBaseline = { slipTaskId: "", slipMin: 0 };
+
+    // Timers go through the window when one exists; test stubs have neither.
+    function later(fn, ms) {
+      const view = d.defaultView;
+      if (view && typeof view.setTimeout === "function") return view.setTimeout(fn, ms);
+      return typeof setTimeout === "function" ? setTimeout(fn, ms) : null;
+    }
+    function cancelLater(id) {
+      if (id === null || id === undefined) return;
+      const view = d.defaultView;
+      if (view && typeof view.clearTimeout === "function") view.clearTimeout(id);
+      else if (typeof clearTimeout === "function") clearTimeout(id);
+    }
 
     function setText(id, val) {
       const el = $(id);
@@ -156,9 +178,157 @@
         }));
     }
 
+    /* ----------------------- undo and redo ----------------------- */
+
+    function snapshot() {
+      return {
+        presetId: state.presetId,
+        tasks: state.tasks.map((t) => Object.assign({}, t, { deps: t.deps.slice() })),
+        doneTaskIds: state.doneTaskIds.slice(),
+        selectedTaskId: state.selectedTaskId,
+        slipTaskId: state.slipTaskId,
+        slipMin: state.slipMin,
+        policy: state.policy,
+        focusBlockMin: state.focusBlockMin,
+        breakMin: state.breakMin,
+        dayCapacityMin: state.dayCapacityMin,
+        workers: state.workers
+      };
+    }
+
+    function syncHistoryButtons() {
+      const undoBtn = $("btn-undo");
+      const redoBtn = $("btn-redo");
+      if (undoBtn) {
+        undoBtn.disabled = !history.canUndo();
+        undoBtn.setAttribute("title", history.canUndo() ? `Undo: ${history.undoLabel()}` : "Nothing to undo");
+      }
+      if (redoBtn) {
+        redoBtn.disabled = !history.canRedo();
+        redoBtn.setAttribute("title", history.canRedo() ? `Redo: ${history.redoLabel()}` : "Nothing to redo");
+      }
+    }
+
+    // Runs one plan change and records it as a single undo step. A change
+    // that leaves the plan identical records nothing.
+    function mutate(label, fn) {
+      const before = snapshot();
+      const out = fn();
+      history.commit(before, snapshot(), label);
+      slipBaseline = { slipTaskId: state.slipTaskId, slipMin: state.slipMin };
+      syncHistoryButtons();
+      return out;
+    }
+
+    function commitSlipEdit() {
+      const after = snapshot();
+      const before = Object.assign({}, after, slipBaseline);
+      const label = state.slipTaskId && state.slipMin > 0
+        ? `Delay ${state.slipTaskId} by ${state.slipMin}m` : "Clear delay";
+      history.commit(before, after, label);
+      slipBaseline = { slipTaskId: state.slipTaskId, slipMin: state.slipMin };
+      syncHistoryButtons();
+    }
+
+    function restoreSnapshot(snap) {
+      const settingsChanged =
+        (snap.policy !== undefined && snap.policy !== state.policy) ||
+        (snap.focusBlockMin !== undefined && snap.focusBlockMin !== state.focusBlockMin) ||
+        (snap.breakMin !== undefined && snap.breakMin !== state.breakMin) ||
+        (snap.dayCapacityMin !== undefined && snap.dayCapacityMin !== state.dayCapacityMin);
+      state.presetId = snap.presetId;
+      state.tasks = snap.tasks;
+      state.doneTaskIds = snap.doneTaskIds;
+      state.selectedTaskId = snap.selectedTaskId;
+      state.slipTaskId = snap.slipTaskId;
+      state.slipMin = snap.slipMin;
+      if (snap.policy !== undefined) state.policy = snap.policy;
+      if (snap.focusBlockMin !== undefined) state.focusBlockMin = snap.focusBlockMin;
+      if (snap.breakMin !== undefined) state.breakMin = snap.breakMin;
+      if (snap.dayCapacityMin !== undefined) state.dayCapacityMin = snap.dayCapacityMin;
+      if (snap.workers !== undefined) state.workers = snap.workers;
+      slipBaseline = { slipTaskId: snap.slipTaskId, slipMin: snap.slipMin };
+      showError("");
+      setInspectorStatus("");
+      persist();
+      syncPresetSelect();
+      setValue("policy-select", state.policy);
+      setValue("focus-min-input", String(state.focusBlockMin));
+      setValue("break-min-input", String(state.breakMin));
+      setValue("cap-min-input", String(state.dayCapacityMin));
+      setValue("workers-input", String(state.workers));
+      populateSlipDropdown();
+      setValue("slip-min-input", String(state.slipMin));
+      if (settingsChanged) resetFocus(false);
+      fillInspector(state.selectedTaskId);
+      render();
+      syncHistoryButtons();
+    }
+
+    // A shared plan is not one of the samples, so it gets its own entry.
+    function syncPresetSelect() {
+      const sel = $("preset-select");
+      if (!sel) return;
+      const known = Engine.PRESET_WORKFLOWS.some((w) => w.id === state.presetId);
+      if (!known && !Array.from(sel.options || []).some((o) => o.value === "shared")) {
+        const opt = d.createElement("option");
+        opt.value = "shared";
+        opt.textContent = "Shared plan";
+        sel.appendChild(opt);
+      }
+      sel.value = known ? state.presetId : "shared";
+    }
+
+    function undo() {
+      const entry = history.undo(snapshot());
+      if (!entry) return false;
+      restoreSnapshot(entry.snapshot);
+      showToast(`Undid: ${entry.label}`);
+      return true;
+    }
+
+    function redo() {
+      const entry = history.redo(snapshot());
+      if (!entry) return false;
+      restoreSnapshot(entry.snapshot);
+      showToast(`Redid: ${entry.label}`);
+      return true;
+    }
+
+    let toastTimer = null;
+    function showToast(message, offerUndo) {
+      const box = $("toast");
+      if (!box) return;
+      setText("toast-text", message);
+      const undoBtn = $("toast-undo");
+      if (undoBtn) undoBtn.hidden = !offerUndo;
+      box.classList.remove("is-visible");
+      box.classList.add("is-visible");
+      cancelLater(toastTimer);
+      toastTimer = later(() => box.classList.remove("is-visible"), offerUndo ? 7000 : 3200);
+    }
+
+    /* ------------------------- capybara -------------------------- */
+
+    let capyTimer = null;
+    function setCapyMood(mood, message) {
+      const capy = $("capybara-easter");
+      if (capy) capy.setAttribute("data-mood", mood);
+      if (message) setText("capybara-status", message);
+      cancelLater(capyTimer);
+      capyTimer = later(() => {
+        const el = $("capybara-easter");
+        if (el) el.setAttribute("data-mood", "calm");
+      }, mood === "party" ? 4200 : 2800);
+    }
+
     function applyPreset(presetId) {
       const found = Engine.PRESET_WORKFLOWS.find((w) => w.id === presetId);
       if (!found) return;
+      mutate(`Load ${found.name.replace(/\s*\(\d+ Tasks\)$/, "")}`, () => loadPreset(found));
+    }
+
+    function loadPreset(found) {
       // Kill the running interval BEFORE any focus state is replaced, so a
       // preset switch or reset mid-countdown can never leak a ticking timer
       // into the new graph (Start would otherwise look inert).
@@ -186,7 +356,7 @@
       sel.innerHTML = "";
       const noneOpt = d.createElement("option");
       noneOpt.value = "";
-      noneOpt.textContent = "None (Nominal Duration)";
+      noneOpt.textContent = "No delay";
       sel.appendChild(noneOpt);
       state.tasks.forEach((t) => {
         const opt = d.createElement("option");
@@ -220,6 +390,9 @@
       setValue("inspector-duration", String(t.durationMin));
       setValue("inspector-weight", String(t.weight));
       setValue("inspector-deps", t.deps.join(", "));
+      const saveBtn = $("btn-save-task");
+      if (saveBtn) saveBtn.classList.remove("is-dirty");
+      renderInspectorRelations(t);
       const done = state.doneTaskIds.indexOf(id) !== -1;
       setText("btn-toggle-done", done ? "Mark Not Done" : "Mark Done");
       // Read-only schedule readout: the selected task's live ES, EF, float
@@ -229,6 +402,79 @@
         ? `ES ${n.esMin}m | EF ${n.efMin}m | Float ${n.totalFloatMin}m | ${n.isCritical ? "Critical (0m float)" : "Has float"}`
         : "");
       return { t, done };
+    }
+
+    // Prerequisite chips carry the edit; the hidden comma field stays the
+    // single value source that saveTaskEdits reads.
+    function renderDepChips(hostId, selectedIds, blockedIds, ownId, onToggle) {
+      const host = $(hostId);
+      if (!host) return;
+      host.innerHTML = "";
+      const options = state.tasks.filter((t) => t.id !== ownId);
+      if (options.length === 0) {
+        const none = d.createElement("span");
+        none.className = "chips-empty";
+        none.textContent = "No other tasks yet";
+        host.appendChild(none);
+        return;
+      }
+      for (const task of options) {
+        const on = selectedIds.indexOf(task.id) !== -1;
+        const blocked = blockedIds.indexOf(task.id) !== -1;
+        const chip = d.createElement("button");
+        chip.className = "chip";
+        chip.setAttribute("type", "button");
+        chip.setAttribute("aria-pressed", on ? "true" : "false");
+        chip.setAttribute("title", blocked
+          ? `${task.id} already depends on this task, so it cannot be a prerequisite`
+          : `${task.id}: ${task.title}`);
+        chip.setAttribute("data-dep", task.id);
+        chip.textContent = task.id;
+        chip.disabled = blocked;
+        chip.addEventListener("click", () => onToggle(task.id));
+        host.appendChild(chip);
+      }
+    }
+
+    function refocusChip(hostId, depId) {
+      const host = $(hostId);
+      if (!host || typeof host.querySelector !== "function") return;
+      const cssEscape = typeof CSS !== "undefined" && CSS && typeof CSS.escape === "function"
+        ? CSS.escape : (v) => String(v).replace(/["\\\]]/g, "\\$&");
+      const chip = host.querySelector(`[data-dep="${cssEscape(depId)}"]`);
+      if (chip && typeof chip.focus === "function") chip.focus();
+    }
+
+    function parseDeps(raw) {
+      return String(raw || "").split(",").map((s) => s.trim()).filter(Boolean);
+    }
+
+    function toggleInspectorDep(depId) {
+      const deps = parseDeps(($("inspector-deps") || {}).value);
+      const at = deps.indexOf(depId);
+      if (at === -1) deps.push(depId); else deps.splice(at, 1);
+      setValue("inspector-deps", deps.join(", "));
+      saveTaskEdits();
+      refocusChip("inspector-dep-chips", depId);
+    }
+
+    function renderInspectorRelations(task) {
+      const near = Engine.graphNeighborhood(state.tasks, task.id);
+      setText("inspector-upstream", near.upstream.join(", ") || "Nothing, ready to start");
+      setText("inspector-downstream", near.downstream.join(", ") || "Nothing, this task ends a chain");
+      renderDepChips("inspector-dep-chips", task.deps, near.downstream, task.id, toggleInspectorDep);
+    }
+
+    function renderNewTaskChips() {
+      const picked = parseDeps(($("new-task-deps") || {}).value);
+      renderDepChips("new-task-dep-chips", picked, [], "", (depId) => {
+        const deps = parseDeps(($("new-task-deps") || {}).value);
+        const at = deps.indexOf(depId);
+        if (at === -1) deps.push(depId); else deps.splice(at, 1);
+        setValue("new-task-deps", deps.join(", "));
+        renderNewTaskChips();
+        refocusChip("new-task-dep-chips", depId);
+      });
     }
 
     function selectTask(id) {
@@ -250,10 +496,17 @@
           const g = target && typeof target.closest === "function"
             ? target.closest("g.dag-node")
             : (target && target.parentNode && target.parentNode.getAttribute && target.parentNode.getAttribute("class") === "dag-node" ? target.parentNode : null);
-          if (!g) return;
+          if (!g) {
+            if (ev.type === "click" && state.showRelations) {
+              state.showRelations = false;
+              render();
+            }
+            return;
+          }
           const id = g.getAttribute("data-id");
           if (id) {
             ev.preventDefault();
+            state.showRelations = true;
             state.keyboardSelection = ev.type === "keydown" ? { kind: "node", id } : null;
             selectTask(id);
           }
@@ -321,11 +574,12 @@
       candidate[idx] = Object.assign({}, candidate[idx], { title, durationMin, weight, deps });
       try {
         Engine.validateAndTopoSort(candidate);
-        state.tasks = candidate;
+        mutate(`Edit ${id}`, () => { state.tasks = candidate; });
         setInspectorStatus(`Saved edits to ${id}.`);
         showError("");
         persist();
         populateSlipDropdown();
+        fillInspector(id);
         render();
       } catch (err) {
         showError(err.message);
@@ -343,12 +597,16 @@
         setInspectorStatus(msg);
         return;
       }
-      state.tasks = state.tasks.filter((t) => t.id !== id);
-      state.doneTaskIds = state.doneTaskIds.filter((tid) => tid !== id);
-      state.selectedTaskId = state.tasks.length ? state.tasks[0].id : "";
-      state.slipTaskId = "";
-      state.slipMin = 0;
+      mutate(`Delete ${id}`, () => {
+        state.tasks = state.tasks.filter((t) => t.id !== id);
+        state.doneTaskIds = state.doneTaskIds.filter((tid) => tid !== id);
+        state.selectedTaskId = state.tasks.length ? state.tasks[0].id : "";
+        state.slipTaskId = "";
+        state.slipMin = 0;
+      });
+      setValue("slip-min-input", "0");
       setInspectorStatus(`Deleted ${id}.`);
+      showToast(`Deleted ${id}.`, true);
       showError("");
       persist();
       populateSlipDropdown();
@@ -367,12 +625,315 @@
       const id = state.selectedTaskId;
       if (!id) { setInspectorStatus("Select a task first."); return; }
       const at = state.doneTaskIds.indexOf(id);
-      if (at === -1) state.doneTaskIds.push(id);
-      else state.doneTaskIds.splice(at, 1);
+      const node = at === -1 ? selectedCpmNode(id) : null;
+      mutate(at === -1 ? `Mark ${id} done` : `Restore ${id}`, () => {
+        if (at === -1) state.doneTaskIds.push(id);
+        else state.doneTaskIds.splice(at, 1);
+      });
       setText("btn-toggle-done", at === -1 ? "Mark Not Done" : "Mark Done");
       setInspectorStatus(at === -1 ? `${id} marked done and removed from remaining CPM.` : `${id} restored to the plan.`);
       persist();
       render();
+      if (node && node.isCritical) setCapyMood("party", `Capybara cheers: ${id} just cleared off the critical path!`);
+    }
+
+    /* ---------------- delay shockwave and crash moves ---------------- */
+
+    function shockSelected() {
+      const id = state.selectedTaskId;
+      if (!id) { setInspectorStatus("Select a task first."); return; }
+      if (state.doneTaskIds.indexOf(id) !== -1) { setInspectorStatus(`${id} is done, so it cannot slip.`); return; }
+      mutate(`Delay ${id} by 15m`, () => {
+        state.slipMin = state.slipTaskId === id ? state.slipMin + 15 : 15;
+        state.slipTaskId = id;
+      });
+      setValue("slip-task-select", state.slipTaskId);
+      setValue("slip-min-input", String(state.slipMin));
+      state.shockPulse = true;
+      render();
+      reactToDelay();
+    }
+
+    function clearDelay() {
+      mutate("Clear delay", () => { state.slipTaskId = ""; state.slipMin = 0; });
+      setValue("slip-task-select", "");
+      setValue("slip-min-input", "0");
+      render();
+      setCapyMood("calm", "Capybara check: delay cleared, float restored.");
+    }
+
+    function reactToDelay() {
+      if (!state.slipTaskId || state.slipMin <= 0) return;
+      const trace = Engine.traceDelayShockwave(activeTasks(), state.slipTaskId, state.slipMin);
+      if (trace.finishShiftMin > 0) {
+        setCapyMood("worried", `Capybara alert: ${state.slipTaskId} pushed the finish by ${trace.finishShiftMin}m.`);
+      } else {
+        setCapyMood("happy", `Capybara approves: float absorbed all ${trace.absorbedMin}m.`);
+      }
+    }
+
+    function currentAdvice() {
+      const remaining = activeTasks();
+      if (remaining.length === 0) return null;
+      return Engine.adviseCrash(remaining, { slip: activeSlip() });
+    }
+
+    function activeSlip() {
+      return state.slipTaskId && state.slipMin > 0
+        ? { taskId: state.slipTaskId, slipMin: state.slipMin } : null;
+    }
+
+    function applyCrash(moveId) {
+      const advice = currentAdvice();
+      const move = advice && advice.moves.find((m) => m.moveId === moveId);
+      if (!move) { showToast("That move no longer applies to this plan."); return false; }
+      const verb = move.kind === "split2" ? `Split ${move.taskId}` : `Trim ${move.taskId} by ${move.cutMin}m`;
+      mutate(verb, () => {
+        const result = Engine.applyCrashMove(state.tasks, move);
+        state.tasks = result.tasks;
+        if (result.partIds.length) {
+          if (state.selectedTaskId === move.taskId) state.selectedTaskId = result.partIds[0];
+          if (state.slipTaskId === move.taskId) state.slipTaskId = result.partIds[0];
+        }
+      });
+      persist();
+      populateSlipDropdown();
+      fillInspector(state.selectedTaskId);
+      setInspectorStatus(`${verb} applied. Undo restores the previous plan.`);
+      render();
+      showToast(`${verb}: finish ${move.beforeMin}m to ${move.afterMin}m.`, true);
+      setCapyMood("party", `Capybara celebrates: ${move.savedMin}m cleared off the critical path!`);
+      return true;
+    }
+
+    function renderAdvisor(remaining) {
+      const list = $("advisor-list");
+      if (!list) return;
+      list.innerHTML = "";
+      const addEmpty = (text) => {
+        const li = d.createElement("li");
+        li.className = "advisor-empty";
+        li.textContent = text;
+        list.appendChild(li);
+      };
+      if (!remaining.length) { addEmpty("Add a task to see what-if moves."); return; }
+      const advice = Engine.adviseCrash(remaining, { slip: activeSlip() });
+      const lens = state.advisorLens;
+      const rows = (lens === "all" ? advice.bestPerTask : advice.moves.filter((m) => m.kind === lens)).slice(0, 3);
+      if (!rows.length) {
+        addEmpty(advice.blockedByTiedChains
+          ? `${advice.criticalPathCount} equal chains set the finish, so no single move can shorten it.`
+          : "No move of this type shortens the finish.");
+        return;
+      }
+      const cell = (tag, cls, text) => {
+        const node = d.createElement(tag);
+        node.className = cls;
+        if (text !== undefined) node.textContent = text;
+        return node;
+      };
+      for (const move of rows) {
+        const li = cell("li", "advisor-row");
+        const head = cell("span", "advisor-move");
+        head.appendChild(cell("b", "advisor-id", move.taskId));
+        head.appendChild(d.createTextNode ? d.createTextNode(move.label) : cell("span", "", move.label));
+        li.appendChild(head);
+        li.appendChild(cell("span", "advisor-saving", `-${move.savedMin}m`));
+        li.appendChild(cell("span", "advisor-detail",
+          `${move.fromMin}m to ${move.toMin}m, finish ${move.beforeMin}m to ${move.afterMin}m`));
+        const apply = cell("button", "btn btn-small advisor-apply", "Apply");
+        apply.setAttribute("type", "button");
+        apply.setAttribute("aria-label", `Apply ${move.label} on ${move.taskId}`);
+        apply.setAttribute("data-move", move.moveId);
+        apply.addEventListener("click", () => applyCrash(move.moveId));
+        li.appendChild(apply);
+        if (move.newBottleneck) {
+          const lost = move.lostToRivalMin > 0 ? `, ${move.lostToRivalMin}m of this cut is lost` : "";
+          li.appendChild(cell("span", "advisor-insight",
+            `New bottleneck: ${move.newBottleneck.chain.join(" > ")} sets the finish${lost}.`));
+        } else if (move.newlyCriticalIds.length) {
+          li.appendChild(cell("span", "advisor-insight", `Also turns ${move.newlyCriticalIds.join(", ")} critical.`));
+        }
+        list.appendChild(li);
+      }
+    }
+
+    /* ---------------------- share links and print -------------------- */
+
+    function planSettings() {
+      return {
+        policy: state.policy,
+        focusBlockMin: state.focusBlockMin,
+        breakMin: state.breakMin,
+        dayCapacityMin: state.dayCapacityMin,
+        workers: state.workers
+      };
+    }
+
+    function shareHash() {
+      return Engine.encodePlanHash({ tasks: state.tasks, doneTaskIds: state.doneTaskIds, settings: planSettings() });
+    }
+
+    function clearLocationHash() {
+      const view = d.defaultView;
+      if (!view || !view.location || !view.history || typeof view.history.replaceState !== "function") return;
+      try {
+        view.history.replaceState(null, "", view.location.pathname + view.location.search);
+      } catch (_err) {
+        view.location.hash = "";
+      }
+    }
+
+    // A link replaces the plan on screen as one undoable step, then leaves the
+    // address bar so a reload keeps later edits instead of re-importing.
+    function importHash(hash) {
+      const result = Engine.decodePlanHash(hash);
+      clearLocationHash();
+      if (!result.ok) {
+        showError(result.error);
+        showToast(result.error);
+        return false;
+      }
+      const plan = result.plan;
+      mutate("Load shared plan", () => {
+        clearTimerInterval();
+        state.focus = { index: 0, completed: 0, remainingSec: plan.settings.focusBlockMin * 60, running: false, intervalId: null, blockKey: null, exhausted: false };
+        state.presetId = "shared";
+        state.tasks = plan.tasks;
+        state.doneTaskIds = plan.doneTaskIds;
+        state.selectedTaskId = plan.tasks[0].id;
+        state.slipTaskId = "";
+        state.slipMin = 0;
+        Object.assign(state, plan.settings);
+      });
+      syncPresetSelect();
+      setValue("policy-select", state.policy);
+      setValue("focus-min-input", String(state.focusBlockMin));
+      setValue("break-min-input", String(state.breakMin));
+      setValue("cap-min-input", String(state.dayCapacityMin));
+      setValue("workers-input", String(state.workers));
+      setValue("slip-min-input", "0");
+      showError("");
+      persist();
+      populateSlipDropdown();
+      resetFocus(false);
+      fillInspector(state.selectedTaskId);
+      render();
+      showToast(`Loaded a shared plan with ${plan.tasks.length} tasks.`, true);
+      return true;
+    }
+
+    function copyShareLink() {
+      let hash;
+      try {
+        hash = shareHash();
+      } catch (err) {
+        showToast(err.message);
+        return;
+      }
+      const view = d.defaultView;
+      const base = view && view.location ? String(view.location.href).split("#")[0] : "";
+      const link = base + hash;
+      setValue("share-url", link);
+      const field = $("share-url");
+      // The link is selected first, so it is still usable if the browser
+      // holds or refuses clipboard access.
+      if (field && typeof field.select === "function") field.select();
+      const manual = "Link ready. Press Cmd or Ctrl+C to copy it.";
+      showToast(manual);
+      const clip = view && view.navigator && view.navigator.clipboard;
+      if (clip && typeof clip.writeText === "function") {
+        clip.writeText(link).then(() => showToast("Plan link copied."), () => showToast(manual));
+      }
+    }
+
+    function renderPrintPlan(schedule) {
+      const body = $("print-body");
+      if (!body) return;
+      const preset = Engine.PRESET_WORKFLOWS.find((w) => w.id === state.presetId);
+      setText("print-title", preset ? preset.name.replace(/\s*\(\d+ Tasks\)$/, "") : "Shared CadenceDAG plan");
+      const cpm = schedule.cpm;
+      setText("print-summary", `Finish in ${cpm.projectMakespanMin} minutes on the critical path. ` +
+        `${schedule.totalFocusBlocks} focus blocks over ${schedule.totalDays} day${schedule.totalDays === 1 ? "" : "s"}. ` +
+        `Critical tasks: ${cpm.criticalTaskIds.join(", ")}.`);
+      body.innerHTML = "";
+      schedule.taskTimeline.forEach((item, idx) => {
+        const first = schedule.blocks.find((b) => b.taskId === item.id);
+        const tr = d.createElement("tr");
+        const cells = [
+          null,
+          String(idx + 1),
+          `${item.id}: ${item.title}`,
+          first ? `Day ${first.dayIndex}, ${formatClock(first.startIso)}` : "",
+          `${item.durationMin}m`,
+          `${item.totalFloatMin}m`,
+          item.isCritical ? "Critical" : "Float"
+        ];
+        for (const value of cells) {
+          const td = d.createElement("td");
+          if (value === null) {
+            const box = d.createElement("span");
+            box.className = "print-check";
+            td.appendChild(box);
+          } else {
+            td.textContent = value;
+          }
+          tr.appendChild(td);
+        }
+        body.appendChild(tr);
+      });
+    }
+
+    /* ------------------------ keyboard shortcuts --------------------- */
+
+    function isEditableTarget(target) {
+      if (!target) return false;
+      const tag = String(target.tagName || "").toLowerCase();
+      return tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable === true;
+    }
+
+    function isActivatableTarget(target) {
+      if (!target) return false;
+      const tag = String(target.tagName || "").toLowerCase();
+      if (tag === "button" || tag === "a" || tag === "summary") return true;
+      const role = typeof target.getAttribute === "function" ? target.getAttribute("role") : null;
+      return role === "button" || role === "tab";
+    }
+
+    function openShortcuts() {
+      const dialog = $("shortcut-dialog");
+      if (dialog && typeof dialog.showModal === "function" && !dialog.open) dialog.showModal();
+    }
+
+    function closeMenus() {
+      if (typeof d.querySelectorAll !== "function") return;
+      Array.from(d.querySelectorAll("details.menu[open]")).forEach((m) => { m.open = false; });
+    }
+
+    function handleKey(ev) {
+      const key = String(ev.key || "");
+      const target = ev.target;
+      if ((ev.metaKey || ev.ctrlKey) && !ev.altKey) {
+        const lower = key.toLowerCase();
+        // Text fields keep the browser's own undo while someone is typing.
+        if ((lower !== "z" && lower !== "y") || isEditableTarget(target)) return;
+        if (lower === "y" && (ev.shiftKey || ev.metaKey)) return;
+        if (typeof ev.preventDefault === "function") ev.preventDefault();
+        if (lower === "y" || ev.shiftKey) redo(); else undo();
+        return;
+      }
+      if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+      if (key === "Escape") { closeMenus(); return; }
+      if (isEditableTarget(target)) return;
+      if (key === "?") {
+        if (typeof ev.preventDefault === "function") ev.preventDefault();
+        openShortcuts();
+        return;
+      }
+      if ((key === " " || key === "Spacebar") && !isActivatableTarget(target)) {
+        if (typeof ev.preventDefault === "function") ev.preventDefault();
+        toggleTimer();
+      }
     }
 
     function bindTabs() {
@@ -437,10 +998,15 @@
         state.dayCapacityMin = v === "" || !Number.isFinite(n) ? 300 : Math.max(60, Math.min(720, n));
       });
       onInput("start-date-input", (v) => { state.startDateIso = v || todayLocalIso(); });
-      onInput("slip-task-select", (v) => { state.slipTaskId = v; });
+      onInput("slip-task-select", (v) => { state.slipTaskId = v; state.shockPulse = true; });
       onInput("slip-min-input", (v) => {
         const n = Number(v);
         state.slipMin = v === "" || !Number.isFinite(n) ? 0 : Math.max(0, n);
+        state.shockPulse = true;
+      });
+      ["slip-task-select", "slip-min-input"].forEach((id) => {
+        const el = $(id);
+        if (el) el.addEventListener("change", () => { commitSlipEdit(); reactToDelay(); });
       });
       onInput("workers-input", (v) => {
         const n = Number(v);
@@ -454,7 +1020,9 @@
       const addBtn = $("btn-add-task");
       if (addBtn) {
         addBtn.addEventListener("click", () => {
-          const id = (($("new-task-id") || {}).value || "").trim() || `T${state.tasks.length + 1}`;
+          let autoNumber = state.tasks.length + 1;
+          while (state.tasks.some((t) => t.id === `T${autoNumber}`)) autoNumber += 1;
+          const id = (($("new-task-id") || {}).value || "").trim() || `T${autoNumber}`;
           const title = (($("new-task-title") || {}).value || "").trim() || `Custom Task ${id}`;
           const dur = Number((($("new-task-dur") || {}).value || "30"));
           const wt = Number((($("new-task-weight") || {}).value || "7"));
@@ -463,13 +1031,21 @@
           const candidate = state.tasks.concat([{ id, title, durationMin: dur, weight: wt, category: "Custom", deps }]);
           try {
             Engine.validateAndTopoSort(candidate);
-            state.tasks = candidate;
-            state.selectedTaskId = id;
+            mutate(`Add ${id}`, () => {
+              state.tasks = candidate;
+              state.selectedTaskId = id;
+            });
             setInspectorStatus(`Added ${id}.`);
             showError("");
             persist();
             populateSlipDropdown();
+            setValue("new-task-id", "");
+            setValue("new-task-title", "");
+            setValue("new-task-deps", "");
             selectTask(id);
+            const addMenu = $("add-task-menu");
+            if (addMenu) addMenu.open = false;
+            showToast(`Added ${id}.`, true);
           } catch (err) {
             showError(err.message);
           }
@@ -485,33 +1061,13 @@
       bindClick("btn-delete-task", deleteSelectedTask);
       bindClick("btn-toggle-done", toggleDone);
       bindClick("btn-reset-preset", () => {
-        applyPreset(state.presetId);
+        applyPreset(Engine.PRESET_WORKFLOWS.some((w) => w.id === state.presetId) ? state.presetId : Engine.PRESET_WORKFLOWS[0].id);
+        syncPresetSelect();
         setInspectorStatus(`Reset to ${state.presetId} preset. Saved edits cleared.`);
       });
 
-      bindClick("btn-timer-start", () => {
-        const blocks = focusBlocks();
-        if (state.focus.exhausted || !blocks.length) {
-          setText("focus-status", blocks.length
-            ? "Every block is done. Reset the timer or load more work to continue."
-            : "No blocks to run. Add a task or reset the preset first.");
-          return;
-        }
-        if (state.focus.intervalId) return;
-        // A fresh Start always loads the real duration of the block it points
-        // at, so the countdown can never inherit a stale length.
-        const current = blocks[state.focus.index] || blocks[0];
-        const expected = current.durationMin * 60;
-        if (state.focus.remainingSec <= 0 || state.focus.remainingSec > expected) {
-          state.focus.remainingSec = expected;
-        }
-        state.focus.blockKey = `${current.taskId} p${current.part}`;
-        state.focus.running = true;
-        state.focus.intervalId = d.defaultView && d.defaultView.setInterval
-          ? d.defaultView.setInterval(tickTimer, 1000)
-          : (typeof setInterval === "function" ? setInterval(tickTimer, 1000) : null);
-        updateFocusUI();
-      });
+      bindClick("btn-timer-start", startTimer);
+      bindClick("pill-toggle", toggleTimer);
       bindClick("btn-timer-pause", () => { pauseTimer(); });
       bindClick("btn-timer-reset", () => { resetFocus(true); });
       bindClick("btn-timer-complete", () => { completeBlock(true); });
@@ -520,8 +1076,10 @@
         const blocks = focusBlocks();
         const current = blocks[state.focus.index] || blocks[0];
         if (!current) { setText("focus-status", "No active block to mark done."); return; }
-        if (state.doneTaskIds.indexOf(current.taskId) === -1) state.doneTaskIds.push(current.taskId);
-        state.selectedTaskId = current.taskId;
+        mutate(`Mark ${current.taskId} done`, () => {
+          if (state.doneTaskIds.indexOf(current.taskId) === -1) state.doneTaskIds.push(current.taskId);
+          state.selectedTaskId = current.taskId;
+        });
         persist();
         setText("focus-status", `${current.taskId} marked done. The critical path and queue were recomputed below.`);
         render();
@@ -603,11 +1161,114 @@
             "Capybara tip: prioritize high weight-to-duration nodes on critical edges.",
             "Capybara spotted! Hydration break (+5m) keeps critical paths steady."
           ];
-          setText("capybara-status", notes[state.capyClicks % notes.length]);
+          if (state.capyClicks % 5 === 0) {
+            setCapyMood("party", `Capybara tangerine party! ${state.capyClicks} pets and zero float lost.`);
+          } else {
+            setCapyMood("happy", notes[state.capyClicks % notes.length]);
+          }
         };
         capy.addEventListener("click", pet);
         capy.addEventListener("keydown", (ev) => {
           if (ev.key === "Enter" || ev.key === " " || ev.key === "Spacebar") { ev.preventDefault(); pet(); }
+        });
+      }
+    }
+
+    // Leaving a field with the mouse fires change between press and release.
+    // Saving there would rebuild the control under the pointer and swallow the
+    // click, so the save waits for the click's capture phase instead.
+    let pointerHeld = false;
+    let pendingInlineEdit = false;
+
+    function flushInlineEdit() {
+      if (!pendingInlineEdit) return;
+      pendingInlineEdit = false;
+      saveTaskEdits();
+    }
+
+    function commitInlineEdit() {
+      if (pointerHeld) pendingInlineEdit = true;
+      else saveTaskEdits();
+    }
+
+    // Uses the event path because a clicked chip may already be rebuilt and
+    // detached from its menu by the time this listener runs.
+    function eventInsideMenu(ev) {
+      const path = typeof ev.composedPath === "function" ? ev.composedPath() : [];
+      if (path.some((n) => n && typeof n.matches === "function" && n.matches("details.menu"))) return true;
+      return Boolean(ev.target && typeof ev.target.closest === "function" && ev.target.closest("details.menu"));
+    }
+
+    function bindStudioControls() {
+      const bindClick = (id, fn) => {
+        const el = $(id);
+        if (el) el.addEventListener("click", fn);
+      };
+      bindClick("btn-undo", undo);
+      bindClick("btn-redo", redo);
+      bindClick("toast-undo", undo);
+      bindClick("btn-shock", shockSelected);
+      bindClick("btn-clear-delay", clearDelay);
+      bindClick("btn-share-link", copyShareLink);
+      bindClick("btn-shortcuts", openShortcuts);
+      bindClick("btn-shortcuts-close", () => {
+        const dialog = $("shortcut-dialog");
+        if (dialog && typeof dialog.close === "function") dialog.close();
+      });
+      bindClick("btn-print", () => {
+        closeMenus();
+        const view = d.defaultView;
+        if (view && typeof view.print === "function") view.print();
+      });
+
+      // Inline edits commit when a field settles; the Save button only
+      // appears while a change is still pending.
+      ["inspector-title", "inspector-duration", "inspector-weight"].forEach((id) => {
+        const el = $(id);
+        if (!el) return;
+        el.addEventListener("input", () => {
+          const saveBtn = $("btn-save-task");
+          if (saveBtn) saveBtn.classList.add("is-dirty");
+        });
+        el.addEventListener("change", commitInlineEdit);
+      });
+
+      const lensHost = $("advisor-lens");
+      const lensButtons = typeof d.querySelectorAll === "function" ? Array.from(d.querySelectorAll(".lens-btn")) : [];
+      if (lensHost) {
+        lensButtons.forEach((btn) => {
+          btn.addEventListener("click", () => {
+            state.advisorLens = btn.getAttribute("data-lens") || "all";
+            lensButtons.forEach((b) => b.setAttribute("aria-pressed", b === btn ? "true" : "false"));
+            renderAdvisor(activeTasks());
+          });
+        });
+      }
+
+      if (typeof d.addEventListener === "function") {
+        d.addEventListener("keydown", handleKey);
+        // A click outside an open menu closes it.
+        d.addEventListener("click", (ev) => {
+          if (!eventInsideMenu(ev)) closeMenus();
+        });
+        d.addEventListener("pointerdown", () => { pointerHeld = true; }, true);
+        d.addEventListener("pointerup", () => {
+          pointerHeld = false;
+          // A release that produces no click still saves the edit.
+          later(flushInlineEdit, 0);
+        }, true);
+        d.addEventListener("click", flushInlineEdit, true);
+      }
+      const view = d.defaultView;
+      if (view && typeof view.addEventListener === "function") {
+        view.addEventListener("hashchange", () => {
+          const hash = String(view.location.hash || "");
+          if (hash.indexOf("#plan=") === 0) importHash(hash);
+        });
+        let resizeTimer = null;
+        view.addEventListener("resize", () => {
+          cancelLater(resizeTimer);
+          resizeTimer = later(render, 120);
         });
       }
     }
@@ -693,6 +1354,34 @@
       }
     }
 
+    function startTimer() {
+      const blocks = focusBlocks();
+      if (state.focus.exhausted || !blocks.length) {
+        setText("focus-status", blocks.length
+          ? "Every block is done. Reset the timer or load more work to continue."
+          : "No blocks to run. Add a task or reset the preset first.");
+        return;
+      }
+      if (state.focus.intervalId) return;
+      // A fresh Start always loads the real duration of the block it points
+      // at, so the countdown can never inherit a stale length.
+      const current = blocks[state.focus.index] || blocks[0];
+      const expected = current.durationMin * 60;
+      if (state.focus.remainingSec <= 0 || state.focus.remainingSec > expected) {
+        state.focus.remainingSec = expected;
+      }
+      state.focus.blockKey = `${current.taskId} p${current.part}`;
+      state.focus.running = true;
+      state.focus.intervalId = d.defaultView && d.defaultView.setInterval
+        ? d.defaultView.setInterval(tickTimer, 1000)
+        : (typeof setInterval === "function" ? setInterval(tickTimer, 1000) : null);
+      updateFocusUI();
+    }
+
+    function toggleTimer() {
+      if (state.focus.running) pauseTimer(); else startTimer();
+    }
+
     function pauseTimer() {
       state.focus.running = false;
       clearTimerInterval();
@@ -768,7 +1457,7 @@
       state.capyCelebration = true;
       const badge = $("capybara-badge");
       if (badge && badge.classList) badge.classList.add("is-glowing");
-      setText("capybara-status", capyMessage);
+      setCapyMood("happy", capyMessage);
     }
 
     function tickTimer() {
@@ -840,6 +1529,20 @@
       const blocks = focusBlocks();
       const current = blocks[state.focus.index] || blocks[0];
       setText("focus-countdown", mmss(state.focus.remainingSec));
+      setText("pill-countdown", mmss(state.focus.remainingSec));
+      setText("pill-task", current ? `${current.taskId}: ${current.title}` : "No block loaded");
+      const pill = $("timer-pill");
+      if (pill) pill.classList.toggle("is-running", state.focus.running);
+      const pillBtn = $("pill-toggle");
+      if (pillBtn) {
+        pillBtn.setAttribute("aria-label", state.focus.running ? "Pause focus timer" : "Start focus timer");
+        pillBtn.disabled = !blocks.length || state.focus.exhausted;
+      }
+      const pillFill = $("pill-bar-fill");
+      if (pillFill && pillFill.style) {
+        const span = Math.max(1, current ? current.durationMin * 60 : state.focusBlockMin * 60);
+        pillFill.style.width = `${Math.round((1 - Math.max(0, Math.min(1, state.focus.remainingSec / span))) * 100)}%`;
+      }
       const ring = $("focus-ring-arc");
       if (ring && ring.setAttribute) {
         // The ring fills against the current block's own duration, not a
@@ -1023,6 +1726,11 @@
       ["kpi-paths", "kpi-parallel", "kpi-util", "kpi-slack", "kpi-worst", "kpi-mean-delay"].forEach((id) => setText(id, "-"));
       ["kpi-paths-sub", "kpi-parallel-sub", "kpi-util-sub", "kpi-slack-sub", "kpi-worst-sub", "kpi-mean-delay-sub"].forEach((id) => setText(id, reason));
       setText("slip-summary", reason);
+      renderAdvisor([]);
+      renderNewTaskChips();
+      const printBody = $("print-body");
+      if (printBody) printBody.innerHTML = "";
+      setText("print-summary", reason);
       const sel = state.selectedTaskId;
       if (!sel) {
         setValue("inspector-title", "");
@@ -1058,6 +1766,8 @@
       const deltaMakespan = cpm.projectMakespanMin - baselineCpm.projectMakespanMin;
 
       setText("kpi-makespan", `${cpm.projectMakespanMin} min`);
+      const finishEl = $("kpi-makespan");
+      if (finishEl) finishEl.setAttribute("data-state", deltaMakespan > 0 ? "pushed" : "steady");
       setText(
         "kpi-makespan-sub",
         deltaMakespan > 0
@@ -1065,7 +1775,10 @@
           : `Parallel speedup ${cpm.parallelSpeedup.toFixed(2)}x (${cpm.totalWorkMin}m work)`
       );
       setText("kpi-crit-count", `${cpm.criticalTaskIds.length} / ${cpm.nodes.length}`);
-      setText("kpi-crit-sub", cpm.criticalTaskIds.join(" > "));
+      // Parallel critical tasks are not a sequence, so show one real chain.
+      const chains = Engine.enumerateCriticalPaths(remaining, activeSlip());
+      const extraChains = chains.pathCount - 1;
+      setText("kpi-crit-sub", chains.criticalPaths[0].join(" > ") + (extraChains > 0 ? ` (+${extraChains} tied)` : ""));
       setText("kpi-blocks", `${schedule.totalFocusBlocks} blocks`);
       setText(
         "kpi-blocks-sub",
@@ -1073,10 +1786,16 @@
         (state.breakMin > 0 ? ` + ${state.breakMin}m break` : ", no breaks")
       );
       setText("kpi-wspt", `${Math.round(schedule.totalWeightedCompletion).toLocaleString()}`);
-      setText("kpi-wspt-sub", `Sum of weight x finish time, ${state.policy === "critical" ? "Critical-First" : state.policy === "shortest" ? "SPT" : "WSPT"} order`);
+      setText("kpi-wspt-sub", `Lower is better, ${state.policy === "critical" ? "Critical-First" : state.policy === "shortest" ? "SPT" : "WSPT"} order`);
 
       if (Svg) {
-        Svg.renderDagGraph($("svg-dag"), cpm, state.selectedTaskId);
+        const slip = activeSlip();
+        Svg.renderDagGraph($("svg-dag"), cpm, state.selectedTaskId, {
+          related: state.showRelations && state.selectedTaskId ? Engine.graphNeighborhood(remaining, state.selectedTaskId) : null,
+          shock: slip ? Engine.traceDelayShockwave(remaining, slip.taskId, slip.slipMin) : null,
+          animate: state.shockPulse
+        });
+        state.shockPulse = false;
         Svg.renderGanttChart($("svg-gantt"), cpm);
       }
 
@@ -1088,7 +1807,7 @@
           `Slip on ${state.slipTaskId} (+${state.slipMin}m): baseline float ${baseNode ? baseNode.totalFloatMin : 0}m absorbed ${absorbed}m; project makespan shifted by +${deltaMakespan}m.`
         );
       } else {
-        setText("slip-summary", "No delay injected. Pick any task and add slip minutes to watch slack absorb small delays or push the deadline.");
+        setText("slip-summary", "No delay injected. Pick a task and add minutes to watch float absorb it or the finish move.");
       }
 
       const slackBody = $("slack-table-body");
@@ -1135,6 +1854,9 @@
       renderComparisonStrip();
       renderNextAction(res);
       renderRiskPanel(remaining);
+      renderAdvisor(remaining);
+      renderNewTaskChips();
+      renderPrintPlan(schedule);
       // The timer follows the recomputed queue: rebase onto the saved block
       // identity, or cleanly onto the first remaining block when that block
       // completed or was removed.
@@ -1155,13 +1877,15 @@
           sel.appendChild(opt);
         });
       }
-      if (sel) sel.value = state.presetId;
+      syncPresetSelect();
       const dateInput = $("start-date-input");
       if (dateInput) dateInput.value = state.startDateIso;
       populateSlipDropdown();
       bindTabs();
       bindInputs();
+      bindStudioControls();
       bindSelection();
+      syncHistoryButtons();
       // A stale persisted selection (task deleted before reload) already
       // fell back during loadPersisted; sync the inspector to whatever exists.
       if (!state.selectedTaskId || !state.tasks.some((t) => t.id === state.selectedTaskId)) {
@@ -1170,11 +1894,16 @@
       resetFocus(false);
       if (state.selectedTaskId) selectTask(state.selectedTaskId);
       else render();
+      const view = d.defaultView;
+      const hash = view && view.location ? String(view.location.hash || "") : "";
+      if (hash.indexOf("#plan=") === 0) importHash(hash);
     }
 
     return { init, render, applyPreset, state,
       selectTask, saveTaskEdits, deleteSelectedTask, toggleDone,
-      completeBlock, skipBlock, resetFocus, comparePolicies: () => Engine.comparePolicies(activeTasks()) };
+      completeBlock, skipBlock, resetFocus, comparePolicies: () => Engine.comparePolicies(activeTasks()),
+      undo, redo, applyCrash, shockSelected, clearDelay, importHash, shareHash, handleKey, toggleTimer,
+      canUndo: () => history.canUndo(), canRedo: () => history.canRedo() };
   }
 
   if (typeof document !== "undefined") {
