@@ -51,7 +51,13 @@ test("DOM smoke: CadenceDAG binds all controls, handles cycle errors, slippage, 
     "new-task-title", "new-task-weight", "new-task-deps", "btn-add-task", "error-banner",
     "kpi-makespan", "kpi-crit-count", "kpi-blocks", "kpi-wspt", "svg-dag", "svg-gantt",
     "slip-task-select", "slip-min-input", "slip-summary", "slack-table-body", "blocks-table-body",
-    "capybara-easter", "capybara-status"
+    "capybara-easter", "capybara-status",
+    "workers-input", "risk-delay-input", "tab-risk", "panel-risk",
+    "kpi-paths", "kpi-paths-sub", "kpi-parallel", "kpi-parallel-sub",
+    "kpi-util", "kpi-util-sub", "kpi-slack", "kpi-slack-sub",
+    "kpi-worst", "kpi-worst-sub", "kpi-mean-delay", "kpi-mean-delay-sub",
+    "critical-paths-body", "worker-ledger-body", "risk-samples-body",
+    "btn-export-telemetry", "btn-validate-ics", "ics-validate-result"
   ];
 
   const byId = new Map();
@@ -60,13 +66,13 @@ test("DOM smoke: CadenceDAG binds all controls, handles cycle errors, slippage, 
     byId.set(id, makeEl(id.includes("select") ? "select" : id.includes("input") ? "input" : id.includes("svg") ? "svg" : "div", id));
   }
 
-  const tabs = ["tab-dag", "tab-nodes", "tab-blocks"].map((id, idx) => {
+  const tabs = ["tab-dag", "tab-nodes", "tab-blocks", "tab-risk"].map((id, idx) => {
     const t = makeEl("button", id);
-    t.setAttribute("aria-controls", ["panel-dag", "panel-nodes", "panel-blocks"][idx]);
+    t.setAttribute("aria-controls", ["panel-dag", "panel-nodes", "panel-blocks", "panel-risk"][idx]);
     t.setAttribute("aria-selected", idx === 0 ? "true" : "false");
     return t;
   });
-  const panels = ["panel-dag", "panel-nodes", "panel-blocks"].map((id, idx) => {
+  const panels = ["panel-dag", "panel-nodes", "panel-blocks", "panel-risk"].map((id, idx) => {
     const p = makeEl("div", id);
     if (idx === 0) p.classList.add("is-active");
     return p;
@@ -100,7 +106,7 @@ test("DOM smoke: CadenceDAG binds all controls, handles cycle errors, slippage, 
   const ctrl = sandbox.CadenceDagApp.createController(doc);
   ctrl.init();
 
-  assert.equal(byId.get("preset-select").options.length, 3);
+  assert.equal(byId.get("preset-select").options.length, 4);
   assert.ok(byId.get("kpi-makespan").textContent.includes("min"));
   assert.ok(byId.get("svg-dag").children.length > 5);
   assert.ok(byId.get("svg-gantt").children.length > 5);
@@ -118,6 +124,34 @@ test("DOM smoke: CadenceDAG binds all controls, handles cycle errors, slippage, 
   byId.get("btn-add-task").dispatchEvent({ type: "click" });
   assert.ok(!byId.get("error-banner").classList.contains("is-visible"));
   assert.equal(byId.get("slack-table-body").children.length, 10);
+
+  // Risk panel renders all four derived tables on boot.
+  assert.ok(byId.get("kpi-paths").textContent !== "");
+  assert.ok(byId.get("kpi-parallel").textContent.includes("m"));
+  assert.ok(byId.get("kpi-util").textContent.includes("%"));
+  assert.ok(byId.get("critical-paths-body").children.length >= 1);
+  assert.equal(byId.get("worker-ledger-body").children.length, 3);
+  assert.equal(byId.get("risk-samples-body").children.length, 10);
+
+  // Changing the worker count re-renders the ledger with the new worker total.
+  byId.get("workers-input").value = "4";
+  byId.get("workers-input").dispatchEvent({ type: "change" });
+  assert.equal(byId.get("worker-ledger-body").children.length, 4);
+
+  // Changing the risk delay re-renders the sweep.
+  byId.get("risk-delay-input").value = "20";
+  byId.get("risk-delay-input").dispatchEvent({ type: "change" });
+  assert.ok(byId.get("kpi-worst").textContent.includes("m"));
+
+  // The fourth tab is wired to its panel.
+  const riskTab = tabs[3];
+  riskTab.dispatchEvent({ type: "click" });
+  assert.equal(riskTab.getAttribute("aria-selected"), "true");
+  assert.ok(panels[3].classList.contains("is-active"));
+
+  // The ICS validator reports a real structural result.
+  byId.get("btn-validate-ics").dispatchEvent({ type: "click" });
+  assert.match(byId.get("ics-validate-result").textContent, /Valid RFC 5545 structure/);
 
   // Test capybara easter egg click
   byId.get("capybara-easter").dispatchEvent({ type: "click" });

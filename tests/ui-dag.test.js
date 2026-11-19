@@ -51,8 +51,15 @@ test("renderDagGraph clears previous children, sets viewBox, draws markers, edge
     const nodeGroups = svg.children.filter((c) => c.tagName === "G" && c.attributes.class === "dag-node");
     assert.equal(nodeGroups.length, cpm.nodes.length);
     const selectedGroup = nodeGroups.find((g) => g.attributes["data-id"] === "T2");
-    assert.equal(selectedGroup.children[0].attributes.stroke, "#38bdf8");
-    assert.equal(selectedGroup.children[0].attributes["stroke-width"], "2.4");
+    for (const g of nodeGroups) {
+      assert.equal(g.attributes.tabindex, "0");
+      assert.equal(g.attributes.role, "button");
+      assert.equal(g.children[0].tagName, "TITLE");
+      assert.match(g.children[0].textContent, /Total Float/);
+    }
+    const selectedRect = selectedGroup.children.find((c) => c.tagName === "RECT");
+    assert.equal(selectedRect.attributes.stroke, "#38bdf8");
+    assert.equal(selectedRect.attributes["stroke-width"], "2.4");
   });
 });
 
@@ -78,5 +85,33 @@ test("renderGanttChart renders axis ticks, float ghost bars for slack tasks, and
     assert.ok(rects.some((r) => r.attributes.fill === "rgba(148, 163, 184, 0.18)"));
     assert.ok(rects.some((r) => r.attributes.fill === "#fb7185"));
     assert.ok(rects.some((r) => r.attributes.fill === "#2dd4bf"));
+    // Every bar carries an SVG title tooltip with the full CPM readout.
+    for (const r of rects) {
+      const tip = r.children.find((c) => c.tagName === "TITLE");
+      assert.ok(tip, "each Gantt bar has a <title> tooltip");
+      assert.match(tip.textContent, /ES .*EF .*LS .*LF .*Total Float .*Free Float .*w\/p/);
+    }
+  });
+});
+
+test("renderWorkerSwimlanes draws one lane per worker with idle-gap shading and tooltips", () => {
+  withFakeDocument(() => {
+    const cpm = Engine.analyzeCriticalPath(Engine.PRESET_WORKFLOWS[0].tasks);
+    const multi = Engine.scheduleWithWorkers(cpm.nodes.map((n) => ({
+      id: n.id, durationMin: n.baseDurationMin, weight: n.weight, deps: n.deps
+    })), { workers: 3 });
+    const svg = makeSvgNode("svg");
+    svg.appendChild(makeSvgNode("rect", { id: "stale" }));
+    Svg.renderWorkerSwimlanes(svg, multi);
+    assert.equal(svg.children.some((c) => c.attributes.id === "stale"), false);
+    assert.ok(svg.attributes.viewBox.startsWith("0 0 800 "));
+    const rects = svg.children.filter((c) => c.tagName === "RECT");
+    assert.ok(rects.length > multi.ledger.length);
+    assert.ok(rects.some((r) => r.attributes.fill === "#38bdf8"));
+    assert.ok(rects.some((r) => r.attributes.fill === "rgba(148, 163, 184, 0.14)"));
+    for (const r of rects) {
+      const tip = r.children.find((c) => c.tagName === "TITLE");
+      assert.ok(tip, "each swimlane bar or gap has a tooltip");
+    }
   });
 });

@@ -4,7 +4,7 @@
   "private": true,
   "description": "Offline Critical-Path Method DAG planner, WSPT Pomodoro scheduler, slippage simulator, and RFC 5545 .ics calendar exporter.",
   "scripts": {
-    "test": "node --test tests/"
+    "test": "node --test tests/*.test.js"
   },
   "author": "Aariv Patel",
   "license": "MIT"
