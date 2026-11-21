@@ -561,12 +561,16 @@
         `Policy: ${scheduleResult.policy.toUpperCase()} | Task ${b.taskId} | Block ${b.durationMin}m | Critical: ${b.isCritical ? "Yes" : "No"}`
       );
       const uidPart = sanitizeIcsUidPart(b.taskId);
+      // A sub-second block collapses onto one timestamp; RFC 5545 DTEND
+      // must follow DTSTART, so bump the end by one second.
+      const startMs = new Date(b.startIso).getTime();
+      const endMs = Math.max(new Date(b.endIso).getTime(), startMs + 1000);
       lines.push(
         "BEGIN:VEVENT",
         `UID:cadencedag-${uidPart}-p${b.part}-${i}@local.offline`,
         `DTSTAMP:${dtStamp}`,
-        `DTSTART:${formatIcsUtc(b.startIso)}`,
-        `DTEND:${formatIcsUtc(b.endIso)}`,
+        `DTSTART:${formatIcsUtc(new Date(startMs).toISOString())}`,
+        `DTEND:${formatIcsUtc(new Date(endMs).toISOString())}`,
         `SUMMARY:${summary}`,
         `DESCRIPTION:${desc}`,
         "END:VEVENT"
@@ -737,10 +741,17 @@
   function analyzeScheduleRisk(rawTasks, options) {
     const opts = options || {};
     const delayMin = Math.max(0, numOr(opts.delayMin, 0));
-    const baseline = analyzeCriticalPath(rawTasks);
+    // When the plan already carries a delay, "normal" is the slipped plan:
+    // each swept delay stacks on top of it, so the baseline, the float
+    // column and the worst case agree with the headline CPM.
+    const planSlip = slipOf(opts);
+    const sweepTasks = planSlip
+      ? cloneTasks(rawTasks).map((t) => (t.id === planSlip.taskId ? Object.assign({}, t, { durationMin: t.durationMin + planSlip.slipMin }) : t))
+      : rawTasks;
+    const baseline = analyzeCriticalPath(sweepTasks);
     const samples = [];
     for (const node of baseline.nodes) {
-      const withSlip = analyzeCriticalPath(rawTasks, { taskId: node.id, slipMin: delayMin });
+      const withSlip = analyzeCriticalPath(sweepTasks, { taskId: node.id, slipMin: delayMin });
       const delta = withSlip.projectMakespanMin - baseline.projectMakespanMin;
       samples.push({
         taskId: node.id,
@@ -883,7 +894,7 @@
     const paths = enumerateCriticalPaths(rawTasks, opts.slip);
     // delayMin: 0 is a real setting, not a missing value; only a missing or
     // non-numeric delay falls back to the default sweep of 10 minutes.
-    const risk = analyzeScheduleRisk(rawTasks, { delayMin: numOr(opts.delayMin, 10) });
+    const risk = analyzeScheduleRisk(rawTasks, { delayMin: numOr(opts.delayMin, 10), slip: opts.slip });
     const workers = Math.max(1, Math.floor(numOr(opts.workers, 2)));
     const multi = scheduleWithWorkers(rawTasks, { workers, policy: opts.policy || "wspt", slip: opts.slip });
     const single = scheduleWorkflow(rawTasks, Object.assign({ focusBlockMin: 25, breakMin: 5 }, opts));

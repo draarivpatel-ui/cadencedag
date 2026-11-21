@@ -577,11 +577,11 @@ test("Wave 13: worker scheduling is described as heuristic, never globally optim
   }
 });
 
-test("Wave 13: README states the exact passing test count and lists nine suites", () => {
+test("Wave 13: README states the exact passing test count and lists the suites", () => {
   const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
-  assert.match(readme, /238 tests, 0 failed, 0 skipped, 0 cancelled/);
-  assert.match(readme, /nine node:test files/);
-  assert.equal(readme.includes("203 tests"), false, "the old count is gone once tests grow");
+  assert.match(readme, /261 tests, 0 failed, 0 skipped, 0 cancelled/);
+  assert.match(readme, /ten node:test files/);
+  assert.equal(readme.includes("238 tests"), false, "the old count is gone once tests grow");
 });
 
 test("Wave 13: shipped text has zero em dashes, en dashes or AI mentions", () => {

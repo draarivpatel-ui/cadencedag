@@ -63,7 +63,7 @@ Node.js 18 or newer is sufficient. No install is needed.
 npm test
 ```
 
-That expands to `node --test tests/*.test.js` and passes **238 tests, 0 failed, 0 skipped, 0 cancelled**:
+That expands to `node --test tests/*.test.js` and passes **261 tests, 0 failed, 0 skipped, 0 cancelled**:
 
 | Suite | Tests | Coverage |
 | --- | --- | --- |
@@ -76,6 +76,7 @@ That expands to `node --test tests/*.test.js` and passes **238 tests, 0 failed, 
 | `tests/dag-engine.test.js` | 10 | Presets, validation, CPM, slippage, WSPT, ICS export, free float, Pomodoro splits |
 | `tests/ui-dag.test.js` | 3 | SVG markers, edges, selected stroke, tooltips, Gantt ticks, float bars and worker swimlanes |
 | `tests/dom-smoke.test.js` | 1 | Shipped HTML loaded into a DOM stub with every control exercised |
+| `tests/wave2.test.js` | 23 | Wave 2 regressions: crossover curves re-solved under active delay, disconnected islands, share-link cycles and size caps, fractional durations, restored prerequisites, split verification, timer queue rebase and exhaustion, corrupt and invalid restore states, stale shared-plan option, parked delay honesty, slip-aware delay sweep, sub-second ICS events |
 
 Syntax verification:
 
@@ -123,7 +124,7 @@ styles.css         instrument theme, responsive layout, motion and print plan
 js/dag-engine.js   CPM, crash advisor, shockwave, history, share links, schedulers, risk, ICS
 js/ui-dag.js       SVG DAG, Gantt and worker swimlane renderers
 js/app.js          controller, inspector, timer, shortcuts, sharing, exports
-tests/             nine node:test files
+tests/             ten node:test files
 video/             demo narration and recording steps
 ```
 

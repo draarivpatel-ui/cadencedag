@@ -576,10 +576,11 @@ test("QA N15: README no longer promises an editable start time or stale counts",
   assert.equal(readme.includes("editable block length, break interval, daily focus budget, start time and start date"), false);
   assert.match(readme, /09:00 local day start/);
   assert.equal(readme.includes("no screenshot or headless browser capture was taken"), false);
-  assert.match(readme, /238 tests, 0 failed, 0 skipped, 0 cancelled/);
+  assert.match(readme, /261 tests, 0 failed, 0 skipped, 0 cancelled/);
   // No stale "six test files" or old 79-test claims remain.
   assert.equal(readme.includes("six node:test files"), false);
   assert.equal(readme.includes("79 Node tests passed"), false);
   assert.equal(readme.includes("eight node:test files"), false);
-  assert.match(readme, /nine node:test files/);
+  assert.equal(readme.includes("nine node:test files"), false);
+  assert.match(readme, /ten node:test files/);
 });

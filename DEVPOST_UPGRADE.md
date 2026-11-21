@@ -74,7 +74,7 @@ Pinned values for the first preset (Capybara Habitat Rescue): makespan 180 minut
 
 ## Devpost description
 
-**CadenceDAG: inspect dependencies, slack, and scheduling tradeoffs.** An offline workbench that turns a task dependency graph into exact CPM timings, every distinct critical chain, three priority policies, a live Pomodoro focus timer and a validated RFC 5545 calendar. Click any DAG node to edit it, mark tasks done to recompute the critical path, and watch your work persist locally. The Risk & Resources view assigns ready tasks to parallel workers, draws a swimlane Gantt with idle gaps, and runs a deterministic delay sweep showing exactly how much float absorbs and how much pushes the deadline. A three-policy strip shows the cost of each priority rule. One-click experiments demonstrate float absorption, deadline push and the best exact fix, and a Bottleneck Lab draws the exact deadline response curve for any task with its crossover and rival-chain floor. A Capybara Habitat Rescue preset opens the app and its Chief Slack Auditor explains every result in plain words. Zero dependencies, one HTML file, 238 passing tests.
+**CadenceDAG: inspect dependencies, slack, and scheduling tradeoffs.** An offline workbench that turns a task dependency graph into exact CPM timings, every distinct critical chain, three priority policies, a live Pomodoro focus timer and a validated RFC 5545 calendar. Click any DAG node to edit it, mark tasks done to recompute the critical path, and watch your work persist locally. The Risk & Resources view assigns ready tasks to parallel workers, draws a swimlane Gantt with idle gaps, and runs a deterministic delay sweep showing exactly how much float absorbs and how much pushes the deadline. A three-policy strip shows the cost of each priority rule. One-click experiments demonstrate float absorption, deadline push and the best exact fix, and a Bottleneck Lab draws the exact deadline response curve for any task with its crossover and rival-chain floor. A Capybara Habitat Rescue preset opens the app and its Chief Slack Auditor explains every result in plain words. Zero dependencies, one HTML file, 261 passing tests.
 
 ## What's next
 
@@ -89,8 +89,22 @@ Add calendar-client import verification, resource calendars with real availabili
 238 Node tests across nine files passed, 0 failed, 0 skipped, 0 cancelled. The revamp closes the full Wave 1 judge critique: compact first screen with restored hierarchy, one-click experiment bar, Capybara Habitat Rescue as the opening preset, the Bottleneck Lab response curve, DP-counted critical paths with a capped materialized list, delay-aware telemetry, per-day DST offsets in the controller, an absolute-deadline focus timer, live inspector readouts, a persistent storage status badge, persisted settings with start date in undo history, enforced numeric limits with descriptive errors, stale-move rejection, and UTF-8 byte-length ICS folding.
 
 `npm test` runs `node --test tests/*.test.js`. The explicit file pattern fixes
-Node directory resolution. The suite covers all eight test files.
+Node directory resolution. The suite covers all ten test files.
 Published runtime is not a fixed performance claim.
+
+## November 21 Wave 2 verification
+
+261 Node tests across ten files passed, 0 failed, 0 skipped, 0 cancelled.
+The Wave 2 audit closed seven reproduced defects: a finished countdown that
+refilled to full on re-render, a delay sweep whose baseline, float column and
+worst case ignored the active slip, a boot-time storage warning that never
+cleared after a successful save, a persisted invalid graph dropped silently,
+a stale "Shared plan" option surviving a return to a real preset, a delay
+parked on a done task claiming float absorbed it, and a sub-second focus
+slice collapsing DTEND onto DTSTART in the calendar export. New regressions
+also pin crossover curves against exact re-solves under an active slip,
+disconnected islands, share-link cycles and size caps, fractional durations,
+restored prerequisites, and timer queue rebases.
 
 Verification environment. Node v26.8.1. Visual checks of all four tabs ran in
 a real browser at 1440x900, 1920x1080 and 390x844 with zero captured page

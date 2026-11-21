@@ -167,6 +167,11 @@
       try {
         Engine.validateAndTopoSort(candidate);
       } catch (_err) {
+        // A persisted graph that fails validation (missing dependency,
+        // cycle, bad duration) falls back to the preset, but the user must
+        // know their saved edits could not be restored.
+        stickyStorageNotice = { level: "warning", message: "Saved plan was corrupt; showing the sample plan" };
+        setStorageStatus("warning", stickyStorageNotice.message);
         return;
       }
       state.tasks = candidate;
@@ -201,6 +206,7 @@
     // A load-time problem (corrupt restore, blocked store) stays on the badge
     // until the first real edit, so boot-time saves never silence it.
     let stickyStorageNotice = null;
+    let booted = false;
 
     function setStorageStatus(level, message) {
       const el = $("storage-status");
@@ -223,11 +229,16 @@
           settings: planSettings(),
           startDateIso: state.startDateIso
         }));
-        if (stickyStorageNotice) setStorageStatus(stickyStorageNotice.level, stickyStorageNotice.message);
-        else setStorageStatus("ok", "Saved locally");
-        // A write that succeeded means the store works again: drop any
-        // blocked-store notice from boot once the user edits something.
-        if (stickyStorageNotice && stickyStorageNotice.level !== "warning") stickyStorageNotice = null;
+        if (stickyStorageNotice && !booted) {
+          // A boot-time save (the restored selection re-persisting) must not
+          // silence the load warning: re-apply it until the first real edit.
+          setStorageStatus(stickyStorageNotice.level, stickyStorageNotice.message);
+        } else {
+          // A successful write after boot is the first real edit the warning
+          // was waiting for: it did its job and the badge shows the fresh save.
+          stickyStorageNotice = null;
+          setStorageStatus("ok", "Saved locally");
+        }
       } catch (err) {
         // Private browsing or a full storage quota must not break the app,
         // but the user must see that their edits will disappear on reload.
@@ -372,11 +383,16 @@
       const sel = $("preset-select");
       if (!sel) return;
       const known = Engine.PRESET_WORKFLOWS.some((w) => w.id === state.presetId);
-      if (!known && !Array.from(sel.options || []).some((o) => o.value === "shared")) {
+      const sharedOpt = Array.from(sel.options || sel.children || []).find((o) => o.value === "shared");
+      if (!known && !sharedOpt) {
         const opt = d.createElement("option");
         opt.value = "shared";
         opt.textContent = "Shared plan";
         sel.appendChild(opt);
+      } else if (known && sharedOpt) {
+        // A real preset is active again: the placeholder must not linger
+        // as a dead menu item.
+        sel.removeChild(sharedOpt);
       }
       sel.value = known ? state.presetId : "shared";
     }
@@ -445,6 +461,7 @@
       setInspectorStatus("");
       showError("");
       persist();
+      syncPresetSelect();
       populateSlipDropdown();
       // The inspector must follow the new preset, not keep the old task's fields.
       const picked = fillInspector(state.selectedTaskId);
@@ -1873,7 +1890,9 @@
         if (at !== -1) {
           const moved = f.index !== at;
           if (moved) f.index = at;
-          const capped = Math.min(f.remainingSec > 0 ? f.remainingSec : blocks[at].durationMin * 60, blocks[at].durationMin * 60);
+          // A remainder of 0 means the block finished or the queue is
+          // exhausted: it must stay 0, never refill to a full block.
+          const capped = Math.max(0, Math.min(f.remainingSec, blocks[at].durationMin * 60));
           if (capped !== f.remainingSec || (moved && f.running)) {
             f.remainingSec = capped;
             // The live block's identity or length changed under a running
@@ -2095,7 +2114,7 @@
       // Critical chains follow the active (possibly slipped) plan, matching
       // the CPM the other panels show.
       const paths = Engine.enumerateCriticalPaths(remaining, slip);
-      const risk = Engine.analyzeScheduleRisk(remaining, { delayMin: state.riskDelayMin });
+      const risk = Engine.analyzeScheduleRisk(remaining, { delayMin: state.riskDelayMin, slip });
       const multi = Engine.scheduleWithWorkers(remaining, {
         policy: state.policy, workers: state.workers, slip
       });
@@ -2279,12 +2298,21 @@
       }
 
       if (state.slipTaskId && state.slipMin > 0) {
-        const baseNode = baselineCpm.nodeMap.get(state.slipTaskId);
-        const absorbed = Math.min(state.slipMin, baseNode ? baseNode.totalFloatMin : 0);
-        setText(
-          "slip-summary",
-          `Slip on ${state.slipTaskId} (+${state.slipMin}m): baseline float ${baseNode ? baseNode.totalFloatMin : 0}m absorbed ${absorbed}m; project makespan shifted by +${deltaMakespan}m.`
-        );
+        if (!remaining.some((t) => t.id === state.slipTaskId)) {
+          // A delay left on a done or removed task is inert: say it is
+          // parked instead of claiming float absorbed it.
+          setText(
+            "slip-summary",
+            `Slip on ${state.slipTaskId} (+${state.slipMin}m) is parked: the task is not in the remaining plan, so the delay is inactive until the task returns.`
+          );
+        } else {
+          const baseNode = baselineCpm.nodeMap.get(state.slipTaskId);
+          const absorbed = Math.min(state.slipMin, baseNode ? baseNode.totalFloatMin : 0);
+          setText(
+            "slip-summary",
+            `Slip on ${state.slipTaskId} (+${state.slipMin}m): baseline float ${baseNode ? baseNode.totalFloatMin : 0}m absorbed ${absorbed}m; project makespan shifted by +${deltaMakespan}m.`
+          );
+        }
       } else {
         setText("slip-summary", "No delay injected. Pick a task and add minutes to watch float absorb it or the finish move.");
       }
@@ -2385,6 +2413,7 @@
       const view = d.defaultView;
       const hash = view && view.location ? String(view.location.hash || "") : "";
       if (hash.indexOf("#plan=") === 0) importHash(hash);
+      booted = true;
     }
 
     return { init, render, applyPreset, state, utcOffsetFor, utcOffsetMin,
