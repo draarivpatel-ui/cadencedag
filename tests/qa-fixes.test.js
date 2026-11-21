@@ -212,7 +212,7 @@ test("QA M3: deleting every task persists the empty graph across reload", () => 
   assert.match(reloaded.byId.get("next-action-text").textContent, /No tasks in the plan/);
   assert.equal(reloaded.byId.get("blocks-table-body").innerHTML.includes("A1"), false);
   // The preset dropdown is untouched, so one selection reloads a preset.
-  assert.equal(reloaded.byId.get("preset-select").options.length, 4);
+  assert.equal(reloaded.byId.get("preset-select").options.length, 5);
 });
 
 /* ------- M4: delay analytics propagate through every active analysis ------ */
@@ -576,9 +576,10 @@ test("QA N15: README no longer promises an editable start time or stale counts",
   assert.equal(readme.includes("editable block length, break interval, daily focus budget, start time and start date"), false);
   assert.match(readme, /09:00 local day start/);
   assert.equal(readme.includes("no screenshot or headless browser capture was taken"), false);
-  assert.match(readme, /203 tests, 0 failed, 0 skipped, 0 cancelled/);
+  assert.match(readme, /238 tests, 0 failed, 0 skipped, 0 cancelled/);
   // No stale "six test files" or old 79-test claims remain.
   assert.equal(readme.includes("six node:test files"), false);
   assert.equal(readme.includes("79 Node tests passed"), false);
-  assert.match(readme, /eight node:test files/);
+  assert.equal(readme.includes("eight node:test files"), false);
+  assert.match(readme, /nine node:test files/);
 });

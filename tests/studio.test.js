@@ -576,7 +576,7 @@ test("Studio: saving unchanged fields adds no undo step", () => {
   byId.get("btn-save-task").click();
   // The only step on the stack is still the preset load from the harness.
   ctrl.undo();
-  assert.equal(ctrl.state.presetId, "hackathon-sprint");
+  assert.equal(ctrl.state.presetId, "capybara-rescue");
   assert.equal(ctrl.canUndo(), false);
 });
 

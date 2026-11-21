@@ -36,7 +36,7 @@ test("renderDagGraph clears previous children, sets viewBox, draws markers, edge
     const svg = makeSvgNode("svg");
     svg.appendChild(makeSvgNode("rect", { id: "stale" }));
 
-    Svg.renderDagGraph(svg, cpm, "T2");
+    Svg.renderDagGraph(svg, cpm, "C2");
     assert.equal(svg.children.some((c) => c.attributes.id === "stale"), false);
     assert.ok(svg.attributes.viewBox && svg.attributes.viewBox.startsWith("0 0 "));
     assert.equal(svg.children[0].tagName, "DEFS");
@@ -50,7 +50,7 @@ test("renderDagGraph clears previous children, sets viewBox, draws markers, edge
 
     const nodeGroups = svg.children.filter((c) => c.tagName === "G" && c.attributes.class === "dag-node");
     assert.equal(nodeGroups.length, cpm.nodes.length);
-    const selectedGroup = nodeGroups.find((g) => g.attributes["data-id"] === "T2");
+    const selectedGroup = nodeGroups.find((g) => g.attributes["data-id"] === "C2");
     for (const g of nodeGroups) {
       assert.equal(g.attributes.tabindex, "0");
       assert.equal(g.attributes.role, "button");

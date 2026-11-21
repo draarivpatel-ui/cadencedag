@@ -70,11 +70,11 @@ npm test
 | Forbidden em/en dashes and vendor terms in shipped text | 0 |
 | External network references in shipped runtime | 0 |
 
-Pinned values for the first preset: makespan 250 minutes, one critical chain T1 to T3 to T5 to T6 to T8 to T9, 9 tasks, and a 10 minute delay with 2 of 9 samples fully absorbed. The diamond fixture has a 70 minute makespan, 85 minutes of work, a 10 minute risk delay with 4 samples and a mean delta of 7.5 minutes.
+Pinned values for the first preset (Capybara Habitat Rescue): makespan 180 minutes, one critical chain C1 to C2 to C4 to C7 to C9, 9 tasks, best exact fix C4 split2 saving 25 minutes, and a 10 minute delay with 5 of 9 samples fully absorbed. The diamond fixture has a 70 minute makespan, 85 minutes of work, a 10 minute risk delay with 4 samples and a mean delta of 7.5 minutes.
 
 ## Devpost description
 
-**CadenceDAG: inspect dependencies, slack, and scheduling tradeoffs.** An offline workbench that turns a task dependency graph into exact CPM timings, every distinct critical chain, three priority policies, a live Pomodoro focus timer and a validated RFC 5545 calendar. Click any DAG node to edit it, mark tasks done to recompute the critical path, and watch your work persist locally. The Risk & Resources view assigns ready tasks to parallel workers, draws a swimlane Gantt with idle gaps, and runs a deterministic delay sweep showing exactly how much float absorbs and how much pushes the deadline. A three-policy strip shows the cost of each priority rule, and a high-school AP & Robotics preset makes the math feel real. Zero dependencies, one HTML file, 106 passing tests.
+**CadenceDAG: inspect dependencies, slack, and scheduling tradeoffs.** An offline workbench that turns a task dependency graph into exact CPM timings, every distinct critical chain, three priority policies, a live Pomodoro focus timer and a validated RFC 5545 calendar. Click any DAG node to edit it, mark tasks done to recompute the critical path, and watch your work persist locally. The Risk & Resources view assigns ready tasks to parallel workers, draws a swimlane Gantt with idle gaps, and runs a deterministic delay sweep showing exactly how much float absorbs and how much pushes the deadline. A three-policy strip shows the cost of each priority rule. One-click experiments demonstrate float absorption, deadline push and the best exact fix, and a Bottleneck Lab draws the exact deadline response curve for any task with its crossover and rival-chain floor. A Capybara Habitat Rescue preset opens the app and its Chief Slack Auditor explains every result in plain words. Zero dependencies, one HTML file, 238 passing tests.
 
 ## What's next
 
@@ -83,6 +83,10 @@ Add calendar-client import verification, resource calendars with real availabili
 ## November 18 local verification
 
 203 Node tests passed, 0 failed, 0 skipped, 0 cancelled.
+
+## November 20 Wave 1 revamp verification
+
+238 Node tests across nine files passed, 0 failed, 0 skipped, 0 cancelled. The revamp closes the full Wave 1 judge critique: compact first screen with restored hierarchy, one-click experiment bar, Capybara Habitat Rescue as the opening preset, the Bottleneck Lab response curve, DP-counted critical paths with a capped materialized list, delay-aware telemetry, per-day DST offsets in the controller, an absolute-deadline focus timer, live inspector readouts, a persistent storage status badge, persisted settings with start date in undo history, enforced numeric limits with descriptive errors, stale-move rejection, and UTF-8 byte-length ICS folding.
 
 `npm test` runs `node --test tests/*.test.js`. The explicit file pattern fixes
 Node directory resolution. The suite covers all eight test files.

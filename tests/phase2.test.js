@@ -90,10 +90,10 @@ test("AP Exam & Robotics Build Week preset is a valid 9-task graph with real flo
   assert.equal(ics.errors.length, 0);
 });
 
-test("all four presets remain valid with distinct ids and at least one critical path", () => {
-  assert.equal(Engine.PRESET_WORKFLOWS.length, 4);
+test("all five presets remain valid with distinct ids and at least one critical path", () => {
+  assert.equal(Engine.PRESET_WORKFLOWS.length, 5);
   const ids = Engine.PRESET_WORKFLOWS.map((w) => w.id);
-  assert.equal(new Set(ids).size, 4);
+  assert.equal(new Set(ids).size, 5);
   for (const wf of Engine.PRESET_WORKFLOWS) {
     assert.ok(Engine.enumerateCriticalPaths(wf.tasks).pathCount >= 1);
   }
@@ -250,7 +250,9 @@ test("Pomodoro: complete, skip and reset advance the queue and update progress",
   byId.get("btn-timer-reset").dispatchEvent({ type: "click" });
   assert.equal(ctrl.state.focus.index, 0);
   assert.equal(ctrl.state.focus.completed, 0);
-  assert.equal(byId.get("focus-countdown").textContent, "25:00");
+  // Reset reloads the real first block length: C1 is 20m on the default plan.
+  const firstLen = Engine.scheduleWorkflow(ctrl.state.tasks, { focusBlockMin: 25, breakMin: 5, dayCapacityMin: 300 }).blocks[0].durationMin;
+  assert.equal(byId.get("focus-countdown").textContent, `${String(firstLen).padStart(2, "0")}:00`);
 });
 
 test("Pomodoro: start and pause drive the countdown without any network calls", () => {
@@ -304,12 +306,12 @@ test("DAG selection, inline edit, delete guard and reset preset all work", () =>
 
 test("selectTask fills all inspector fields for a non-first task", () => {
   const { byId, ctrl } = makeHarness();
-  const target = ctrl.state.tasks.find((t) => t.id === "T5");
-  ctrl.selectTask("T5");
+  const target = ctrl.state.tasks.find((t) => t.id === "C5");
+  ctrl.selectTask("C5");
   assert.equal(byId.get("inspector-title").value, target.title);
   assert.equal(byId.get("inspector-duration").value, String(target.durationMin));
   assert.equal(byId.get("inspector-deps").value, target.deps.join(", "));
-  assert.equal(ctrl.state.selectedTaskId, "T5");
+  assert.equal(ctrl.state.selectedTaskId, "C5");
 });
 
 test("Persistence: a fresh controller restores edits and corrupt storage is ignored", () => {
@@ -343,7 +345,7 @@ test("Comparison strip renders three cells and highlights the active policy", ()
 
 test("Next Best Focus Action names a concrete task with a reason", () => {
   const { byId } = makeHarness();
-  assert.match(byId.get("next-action-text").textContent, /^T\d+: .+ is next because/);
+  assert.match(byId.get("next-action-text").textContent, /^C\d+: .+ is next because/);
   assert.match(byId.get("next-action-text").textContent, /(critical bottleneck|highest WSPT score)/);
 });
 
@@ -366,12 +368,12 @@ test("M1: focus task label shows the real task id and never 'undefined'", () => 
   const label = byId.get("focus-task-label").textContent;
   const first = Engine.scheduleWorkflow(ctrl.state.tasks, { focusBlockMin: 25, breakMin: 5, dayCapacityMin: 300 }).blocks[0];
   assert.equal(label, `${first.taskId} p${first.part}: ${first.title}`);
-  assert.match(label, /^T\d+ p\d+: /);
+  assert.match(label, /^C\d+ p\d+: /);
   assert.equal(label.includes("undefined"), false);
   byId.get("btn-timer-complete").dispatchEvent({ type: "click" });
   const next = byId.get("focus-task-label").textContent;
   assert.equal(next.includes("undefined"), false);
-  assert.match(next, /^T\d+ p\d+: /);
+  assert.match(next, /^C\d+ p\d+: /);
   // Same guarantee on the student preset, whose ids use a different prefix.
   ctrl.applyPreset("ap-robotics-week");
   assert.match(byId.get("focus-task-label").textContent, /^A\d+ p\d+: /);
@@ -379,13 +381,13 @@ test("M1: focus task label shows the real task id and never 'undefined'", () => 
 
 test("S1: Mark Done button label flips immediately on toggle and back", () => {
   const { byId, ctrl } = makeHarness();
-  ctrl.selectTask("T5");
+  ctrl.selectTask("C5");
   assert.equal(byId.get("btn-toggle-done").textContent, "Mark Done");
   byId.get("btn-toggle-done").dispatchEvent({ type: "click" });
-  assert.ok(ctrl.state.doneTaskIds.includes("T5"));
+  assert.ok(ctrl.state.doneTaskIds.includes("C5"));
   assert.equal(byId.get("btn-toggle-done").textContent, "Mark Not Done");
   byId.get("btn-toggle-done").dispatchEvent({ type: "click" });
-  assert.equal(ctrl.state.doneTaskIds.includes("T5"), false);
+  assert.equal(ctrl.state.doneTaskIds.includes("C5"), false);
   assert.equal(byId.get("btn-toggle-done").textContent, "Mark Done");
 });
 
@@ -394,10 +396,10 @@ test("S2: escapeHtml neutralizes markup in every innerHTML sink, text sinks keep
   assert.equal(sandboxApp.escapeHtml(`<script>alert("x")</script> & 'y'`),
     "&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &amp; &#39;y&#39;");
   const evil = `<script>alert(1)</script> & <img src=x onerror=1>`;
-  ctrl.selectTask("T1");
+  ctrl.selectTask("C1");
   byId.get("inspector-title").value = evil;
   byId.get("btn-save-task").dispatchEvent({ type: "click" });
-  assert.equal(ctrl.state.tasks.find((t) => t.id === "T1").title, evil);
+  assert.equal(ctrl.state.tasks.find((t) => t.id === "C1").title, evil);
   for (const sink of ["slack-table-body", "blocks-table-body"]) {
     const markup = byId.get(sink).innerHTML;
     assert.ok(markup.includes("&lt;script&gt;alert(1)&lt;/script&gt; &amp; &lt;img src=x onerror=1&gt;"), `${sink} escapes the title`);
@@ -438,7 +440,8 @@ test("Switching presets refreshes the inspector to the new preset's first task",
 test("Focus blocks start at 09:00 on the local wall clock and the banner reason follows the policy", () => {
   const { byId, ctrl } = makeHarness();
   const rows = byId.get("blocks-table-body").innerHTML;
-  assert.match(rows, /09:00 to 09:25/);
+  // C1 (20m) is the first block on the default plan, so the window is 09:00-09:20.
+  assert.match(rows, /09:00 to 09:20/);
   assert.equal(/Local<\/td>|UTC<\/td>/.test(rows), false, "window cells carry no per-cell zone suffix");
   ctrl.applyPreset("ap-robotics-week");
   assert.match(byId.get("next-action-text").textContent, /^A1: .+ highest WSPT score/);

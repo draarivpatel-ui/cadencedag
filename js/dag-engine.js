@@ -9,6 +9,21 @@
 
   const PRESET_WORKFLOWS = [
     {
+      id: "capybara-rescue",
+      name: "Capybara Habitat Rescue (9 Tasks)",
+      tasks: [
+        { id: "C1", title: "Assess flooded habitat", durationMin: 20, weight: 9, category: "Rescue", deps: [] },
+        { id: "C2", title: "Secure a dry shelter", durationMin: 45, weight: 10, category: "Shelter", deps: ["C1"] },
+        { id: "C3", title: "Prepare water station", durationMin: 20, weight: 6, category: "Care", deps: ["C1"] },
+        { id: "C4", title: "Build evacuation ramp", durationMin: 60, weight: 10, category: "Rescue", deps: ["C2"] },
+        { id: "C5", title: "Pack fresh feed", durationMin: 35, weight: 5, category: "Care", deps: ["C3"] },
+        { id: "C6", title: "Veterinary health check", durationMin: 35, weight: 10, category: "Care", deps: ["C2"] },
+        { id: "C7", title: "Move the capybara group", durationMin: 40, weight: 10, category: "Rescue", deps: ["C4", "C6"] },
+        { id: "C8", title: "Check water quality", durationMin: 25, weight: 8, category: "Care", deps: ["C3"] },
+        { id: "C9", title: "Reopen the habitat", durationMin: 15, weight: 10, category: "Shelter", deps: ["C5", "C7", "C8"] }
+      ]
+    },
+    {
       id: "hackathon-sprint",
       name: "Hackathon MVP Launch (9 Tasks)",
       tasks: [
@@ -76,6 +91,10 @@
   }
 
   function cloneTasks(tasks) {
+    if (!Array.isArray(tasks)) throw new Error("Tasks must be an array");
+    if (tasks.some((t) => !t || typeof t !== "object" || Array.isArray(t))) {
+      throw new Error("Every task must be an object");
+    }
     return (tasks || []).map((t) => ({
       id: String(t.id).trim(),
       title: String(t.title || t.id).trim(),
@@ -555,7 +574,22 @@
     }
 
     lines.push("END:VCALENDAR");
-    return lines.join("\r\n") + "\r\n";
+    return lines.map(foldIcsLine).join("\r\n") + "\r\n";
+  }
+
+  // Content lines are limited to 75 UTF-8 octets, including the space on a
+  // continuation line. Iterating code points never splits a Unicode sequence.
+  function foldIcsLine(line) {
+    const encoder = new TextEncoder();
+    const parts = [];
+    let part = "", bytes = 0;
+    for (const char of line) {
+      const width = encoder.encode(char).length;
+      if (bytes + width > 75) { parts.push(part); part = " "; bytes = 1; }
+      part += char; bytes += width;
+    }
+    parts.push(part);
+    return parts.join("\r\n");
   }
 
   /* ------------------------------------------------------------------ */
@@ -569,7 +603,7 @@
    * Accepts the same slip options as analyzeCriticalPath so delay analytics
    * on the active (possibly slipped) plan enumerate the true chains.
    */
-  function enumerateCriticalPaths(rawTasks, slipOptions) {
+  function enumerateCriticalPaths(rawTasks, slipOptions, pathOptions) {
     const { tasks, byId, succs, topoOrder } = validateAndTopoSort(rawTasks);
     const slipTaskId = slipOptions && slipOptions.taskId ? String(slipOptions.taskId) : "";
     const slipMin = slipOptions && Number.isFinite(Number(slipOptions.slipMin)) ? Math.max(0, Number(slipOptions.slipMin)) : 0;
@@ -583,14 +617,24 @@
       ef.set(id, start + dur.get(id));
     }
     const makespan = Math.max(...ef.values());
-    const ends = topoOrder.filter((id) => ef.get(id) === makespan && succs.get(id).length === 0);
+    const ends = topoOrder.filter((id) => Math.abs(ef.get(id) - makespan) < 1e-6 && succs.get(id).length === 0);
+    const maxPaths = Math.max(1, Math.min(256, Math.floor(numOr(pathOptions && pathOptions.maxPaths, 128))));
+    const tightPreds = new Map();
+    const counts = new Map();
+    for (const id of topoOrder) {
+      const preds = byId.get(id).deps.filter((dep) => Math.abs(ef.get(dep) - (ef.get(id) - dur.get(id))) < 1e-6).sort();
+      tightPreds.set(id, preds);
+      counts.set(id, preds.length ? preds.reduce((sum, dep) => sum + counts.get(dep), 0n) : 1n);
+    }
+    const exactCount = ends.reduce((sum, id) => sum + counts.get(id), 0n);
     const paths = [];
     const seen = new Set();
 
     function walk(id, tail) {
+      if (paths.length >= maxPaths) return;
       const chain = [id, ...tail];
       const t = byId.get(id);
-      const preds = t.deps.slice().sort();
+      const preds = tightPreds.get(id);
       let extended = false;
       for (const dep of preds) {
         if (Math.abs(ef.get(dep) - (ef.get(id) - dur.get(id))) < 1e-6) {
@@ -607,7 +651,9 @@
     }
     for (const end of ends.slice().sort()) walk(end, []);
     paths.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
-    return { makespanMin: makespan, criticalPaths: paths, pathCount: paths.length };
+    return { makespanMin: makespan, criticalPaths: paths,
+      pathCount: Number(exactCount), pathCountExact: String(exactCount),
+      truncated: exactCount > BigInt(paths.length), maxPaths };
   }
 
   /**
@@ -619,7 +665,7 @@
   function scheduleWithWorkers(rawTasks, options) {
     const opts = options || {};
     const policy = opts.policy || "wspt";
-    const workers = Math.max(1, Math.floor(Number(opts.workers) || 1));
+    const workers = Math.max(1, Math.min(64, Math.floor(numOr(opts.workers, 1))));
     const cpm = analyzeCriticalPath(rawTasks, opts.slip);
     const remaining = new Map();
     for (const n of cpm.nodes) remaining.set(n.id, n.deps.length);
@@ -740,13 +786,16 @@
    */
   function validateIcs(ics) {
     const text = String(ics || "");
-    const lines = text.split("\r\n");
+    const lines = text.replace(/\r\n[ \t]/g, "").split("\r\n");
     const errors = [];
     if (lines[0] !== "BEGIN:VCALENDAR") errors.push("missing VCALENDAR start");
     if (!lines.includes("VERSION:2.0")) errors.push("missing VERSION:2.0");
     if (!lines.some((l) => l.startsWith("PRODID:"))) errors.push("missing PRODID");
     if (!lines.includes("CALSCALE:GREGORIAN")) errors.push("missing CALSCALE");
     if (lines[lines.length - 2] !== "END:VCALENDAR") errors.push("missing VCALENDAR end");
+    if (lines.filter((l) => l === "BEGIN:VCALENDAR").length !== 1
+      || lines.filter((l) => l === "END:VCALENDAR").length !== 1) errors.push("unbalanced VCALENDAR markers");
+    if (text.split("\r\n").some((line) => new TextEncoder().encode(line).length > 75)) errors.push("content line exceeds 75 octets");
     if (/[\r\n]/.test(text.replace(/\r\n/g, ""))) errors.push("line endings are not CRLF");
     const begins = lines.filter((l) => l === "BEGIN:VEVENT").length;
     const ends = lines.filter((l) => l === "END:VEVENT").length;
@@ -831,7 +880,7 @@
   function planTelemetry(rawTasks, options) {
     const opts = options || {};
     const cpm = analyzeCriticalPath(rawTasks, opts.slip);
-    const paths = enumerateCriticalPaths(rawTasks);
+    const paths = enumerateCriticalPaths(rawTasks, opts.slip);
     // delayMin: 0 is a real setting, not a missing value; only a missing or
     // non-numeric delay falls back to the default sweep of 10 minutes.
     const risk = analyzeScheduleRisk(rawTasks, { delayMin: numOr(opts.delayMin, 10) });
@@ -1019,14 +1068,20 @@
    * prerequisites, and every dependent then waits on both halves.
    */
   function applyCrashMove(rawTasks, move) {
+    if (!move || !CRASH_KINDS.some((k) => k.kind === move.kind)) throw new Error("Unknown crash move");
     const tasks = cloneTasks(rawTasks);
     const at = tasks.findIndex((t) => t.id === move.taskId);
     if (at === -1) throw new Error(`Task ${move.taskId} is not in this plan`);
+    const original = tasks[at];
+    if (move.fromMin !== undefined && Math.abs(move.fromMin - original.durationMin) > EPS) throw new Error("This crash move is stale");
+    if (!Number.isFinite(move.toMin) || move.toMin <= 0 || move.toMin >= original.durationMin) throw new Error("Crash duration must be positive and shorter than the task");
     if (move.kind !== "split2") {
       tasks[at].durationMin = move.toMin;
       return { tasks, partIds: [] };
     }
     const task = tasks[at];
+    if (![move.longHalfMin, move.shortHalfMin].every((n) => Number.isFinite(n) && n > 0)
+      || Math.abs(Math.max(move.longHalfMin, move.shortHalfMin) - move.toMin) > EPS) throw new Error("Invalid parallel split durations");
     const taken = new Set(tasks.map((t) => t.id));
     const freeId = (suffix) => {
       let id = `${task.id}${suffix}`;
@@ -1044,7 +1099,71 @@
       if (t.deps.indexOf(task.id) === -1) continue;
       t.deps = t.deps.flatMap((dep) => (dep === task.id ? [idA, idB] : [dep]));
     }
+    validateAndTopoSort(tasks);
     return { tasks, partIds: [idA, idB] };
+  }
+
+  /** Exact response to changing one task's base duration. Every chain either
+   * includes the task or avoids it. Thus finish(delta) = max(rival, through
+   * + delta). The crossover is the only kink, even with many tied chains. */
+  function analyzeBottleneck(rawTasks, taskId, options) {
+    const opts = options || {};
+    const graph = validateAndTopoSort(rawTasks);
+    const task = graph.byId.get(String(taskId));
+    if (!task) throw new Error(`Task ${taskId} is not in this plan`);
+    const slip = slipOf(opts);
+    const cpm = analyzeCriticalPath(rawTasks, slip);
+    const node = cpm.nodeMap.get(task.id);
+    const durations = new Map(cpm.nodes.map((n) => [n.id, n.effectiveDurationMin]));
+    const rival = longestChain(graph, durations, task.id);
+    const throughMin = cpm.projectMakespanMin - node.totalFloatMin;
+    const minDeltaMin = Math.max(0.01, numOr(opts.minDurationMin, 1)) - task.durationMin;
+    const low = Math.max(minDeltaMin, -60);
+    const high = Math.max(0, Math.min(120, 1440 - task.durationMin));
+    const crossoverDeltaMin = rival.lengthMin - throughMin;
+    const xs = new Set([low, high, 0]);
+    if (crossoverDeltaMin >= low && crossoverDeltaMin <= high) xs.add(crossoverDeltaMin);
+    for (let delta = Math.ceil(low / 5) * 5; delta <= high; delta += 5) xs.add(delta);
+    const points = [...xs].sort((a, b) => a - b).map((deltaMin) => ({
+      deltaMin, durationMin: task.durationMin + deltaMin,
+      makespanMin: Math.max(rival.lengthMin, throughMin + deltaMin)
+    }));
+    return { taskId: task.id, title: task.title, durationMin: task.durationMin,
+      baselineMin: cpm.projectMakespanMin, floatMin: Math.max(0, node.totalFloatMin),
+      throughMin, rivalMin: rival.lengthMin, rivalChain: rival.chain,
+      crossoverDeltaMin, minDeltaMin: low, maxDeltaMin: high,
+      maxUsefulCutMin: Math.min(Math.max(0, -minDeltaMin), Math.max(0, cpm.projectMakespanMin - rival.lengthMin)), points };
+  }
+
+  /** Check the computed CPM and worker ledger with independent constraints. */
+  function verifyPlan(rawTasks, options) {
+    try {
+      const multi = scheduleWithWorkers(rawTasks, options);
+      const cpm = multi.cpm;
+      const failures = [];
+      let checks = 0;
+      const check = (ok, label) => { checks++; if (!ok) failures.push(label); };
+      for (const node of cpm.nodes) {
+        check(Math.abs(node.efMin - node.esMin - node.effectiveDurationMin) < EPS, `${node.id}: forward duration`);
+        check(Math.abs(node.lfMin - node.lsMin - node.effectiveDurationMin) < EPS, `${node.id}: backward duration`);
+        check(node.totalFloatMin >= -EPS && node.freeFloatMin >= -EPS && node.freeFloatMin <= node.totalFloatMin + EPS, `${node.id}: float bounds`);
+        check(Math.abs(node.totalFloatMin - (node.lsMin - node.esMin)) < EPS, `${node.id}: float identity`);
+        for (const dep of node.deps) {
+          check(cpm.nodeMap.get(dep).efMin <= node.esMin + EPS, `${node.id}: CPM precedence ${dep}`);
+          check(multi.ends.get(dep) <= multi.starts.get(node.id) + EPS, `${node.id}: worker precedence ${dep}`);
+        }
+      }
+      for (const lane of multi.ledger) {
+        lane.tasks.forEach((task, i) => check(i === 0 || lane.tasks[i - 1].endMin <= task.startMin + EPS, `W${lane.worker}: no overlap`));
+      }
+      check(multi.makespanMin + EPS >= cpm.projectMakespanMin, "worker schedule respects CPM floor");
+      check(Math.abs(multi.ledger.reduce((sum, lane) => sum + lane.busyMin, 0) - cpm.totalWorkMin) < EPS, "work conserved");
+      return { valid: failures.length === 0, checks, failures };
+    } catch (error) { return { valid: false, checks: 0, failures: [error.message] }; }
+  }
+
+  function remainingTimerSeconds(deadlineMs, nowMs) {
+    return Math.max(0, Math.ceil((deadlineMs - nowMs) / 1000));
   }
 
   /**
@@ -1351,6 +1470,9 @@
     planTelemetry,
     CRASH_KINDS,
     adviseCrash,
+    analyzeBottleneck,
+    verifyPlan,
+    remainingTimerSeconds,
     applyCrashMove,
     graphNeighborhood,
     traceDelayShockwave,

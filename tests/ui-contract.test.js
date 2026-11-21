@@ -91,8 +91,8 @@ test("UI 09: risk KPI values come from the engine, not hard coded markup", () =>
   const p = Engine.enumerateCriticalPaths(Engine.PRESET_WORKFLOWS[0].tasks);
   const r = Engine.analyzeScheduleRisk(Engine.PRESET_WORKFLOWS[0].tasks, { delayMin: 10 });
   const m = Engine.scheduleWithWorkers(Engine.PRESET_WORKFLOWS[0].tasks, { workers: 3 });
-  assert.equal(p.makespanMin, 250);
-  assert.equal(r.baselineMakespanMin, 250);
+  assert.equal(p.makespanMin, 180);
+  assert.equal(r.baselineMakespanMin, 180);
   assert.equal(m.workers, 3);
   assert.ok(m.utilization <= 1);
 });

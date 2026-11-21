@@ -52,7 +52,13 @@
       // on, so the countdown survives queue recomputes (done, edits, deletes)
       // and rebases cleanly onto the first remaining block when the block
       // itself is gone. exhausted marks a finished queue and guards Start.
-      focus: { index: 0, completed: 0, remainingSec: 25 * 60, running: false, intervalId: null, blockKey: null, exhausted: false },
+      // deadlineMs is the absolute wall-clock finish of the running block;
+      // the countdown derives from it instead of counting interval callbacks,
+      // so throttled background tabs never drift.
+      focus: { index: 0, completed: 0, remainingSec: 25 * 60, running: false, intervalId: null, blockKey: null, exhausted: false, deadlineMs: null },
+      // Bottleneck lab preview: the duration delta (minutes) currently shown
+      // for the selected task. 0 means the preview matches the real plan.
+      whatifDeltaMin: 0,
       keyboardSelection: null,
       clockMode: "local",
       capyCelebration: false,
@@ -68,6 +74,13 @@
     // The slip the undo stack last saw, so a burst of typed delay minutes
     // lands as one undo step.
     let slipBaseline = { slipTaskId: "", slipMin: 0 };
+    // The planning settings the undo stack last saw, so settled setting edits
+    // also land as one undo step.
+    let settingsBaseline = {
+      policy: state.policy, focusBlockMin: state.focusBlockMin, breakMin: state.breakMin,
+      dayCapacityMin: state.dayCapacityMin, workers: state.workers,
+      riskDelayMin: state.riskDelayMin, startDateIso: state.startDateIso
+    };
 
     // Timers go through the window when one exists; test stubs have neither.
     function later(fn, ms) {
@@ -99,10 +112,17 @@
     }
 
     function loadPersisted() {
+      if (typeof localStorage === "undefined") {
+        stickyStorageNotice = { level: "warning", message: "Local saving unavailable in this browser" };
+        setStorageStatus("warning", stickyStorageNotice.message);
+        return;
+      }
       let raw = null;
       try {
-        raw = typeof localStorage !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
+        raw = localStorage.getItem(STORAGE_KEY);
       } catch (_err) {
+        stickyStorageNotice = { level: "warning", message: "Local saving unavailable (storage blocked)" };
+        setStorageStatus("warning", stickyStorageNotice.message);
         return;
       }
       // An initialized-but-empty store means the user deleted every task:
@@ -112,9 +132,17 @@
       try {
         data = JSON.parse(raw);
       } catch (_err) {
-        return; // Corrupt JSON: the in-memory preset stays intact.
+        // Corrupt JSON: the in-memory preset stays intact, but the user must
+        // know their previous edits will not come back.
+        stickyStorageNotice = { level: "warning", message: "Saved plan was corrupt; showing the sample plan" };
+        setStorageStatus("warning", stickyStorageNotice.message);
+        return;
       }
-      if (!data || !Array.isArray(data.tasks)) return;
+      if (!data || !Array.isArray(data.tasks)) {
+        stickyStorageNotice = { level: "warning", message: "Saved plan was corrupt; showing the sample plan" };
+        setStorageStatus("warning", stickyStorageNotice.message);
+        return;
+      }
       // An intentional empty array (every task deleted) is a real state:
       // restore it instead of resurrecting the preset tasks. Only a missing
       // key or unparseable JSON above falls back to the in-memory preset.
@@ -152,19 +180,58 @@
       state.selectedTaskId = candidate.some((t) => t.id === data.selectedTaskId)
         ? data.selectedTaskId
         : fallbackId;
+      // Planning settings persist alongside the plan, validated against the
+      // same clamps the inputs enforce, so a corrupt value falls back cleanly.
+      const s = data.settings && typeof data.settings === "object" ? data.settings : {};
+      const clamp = (v, lo, hi, fb) => {
+        const n = Number(v);
+        return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : fb;
+      };
+      if (s.policy === "wspt" || s.policy === "critical" || s.policy === "shortest") state.policy = s.policy;
+      state.focusBlockMin = clamp(s.focusBlockMin, 15, 90, state.focusBlockMin);
+      state.breakMin = clamp(s.breakMin, 0, 30, state.breakMin);
+      state.dayCapacityMin = clamp(s.dayCapacityMin, 60, 720, state.dayCapacityMin);
+      state.workers = clamp(s.workers, 1, 8, state.workers);
+      state.riskDelayMin = clamp(s.riskDelayMin, 0, 240, state.riskDelayMin);
+      if (typeof data.startDateIso === "string" && /^\d{4}-\d{2}-\d{2}$/.test(data.startDateIso)) {
+        state.startDateIso = data.startDateIso;
+      }
+    }
+
+    // A load-time problem (corrupt restore, blocked store) stays on the badge
+    // until the first real edit, so boot-time saves never silence it.
+    let stickyStorageNotice = null;
+
+    function setStorageStatus(level, message) {
+      const el = $("storage-status");
+      if (!el) return;
+      el.textContent = message;
+      el.setAttribute("data-state", level);
     }
 
     function persist() {
       try {
-        if (typeof localStorage === "undefined") return;
+        if (typeof localStorage === "undefined") {
+          setStorageStatus("warning", "Local saving unavailable in this browser");
+          return;
+        }
         localStorage.setItem(STORAGE_KEY, JSON.stringify({
           presetId: state.presetId,
           tasks: state.tasks.map((t) => Object.assign({}, t, { deps: t.deps.slice() })),
           doneTaskIds: state.doneTaskIds.slice(),
-          selectedTaskId: state.selectedTaskId
+          selectedTaskId: state.selectedTaskId,
+          settings: planSettings(),
+          startDateIso: state.startDateIso
         }));
-      } catch (_err) {
-        // Private browsing or a full storage quota must not break the app.
+        if (stickyStorageNotice) setStorageStatus(stickyStorageNotice.level, stickyStorageNotice.message);
+        else setStorageStatus("ok", "Saved locally");
+        // A write that succeeded means the store works again: drop any
+        // blocked-store notice from boot once the user edits something.
+        if (stickyStorageNotice && stickyStorageNotice.level !== "warning") stickyStorageNotice = null;
+      } catch (err) {
+        // Private browsing or a full storage quota must not break the app,
+        // but the user must see that their edits will disappear on reload.
+        setStorageStatus("warning", "Not saved locally" + (err && err.name === "QuotaExceededError" ? " (storage full)" : " (storage blocked)"));
       }
     }
 
@@ -192,7 +259,9 @@
         focusBlockMin: state.focusBlockMin,
         breakMin: state.breakMin,
         dayCapacityMin: state.dayCapacityMin,
-        workers: state.workers
+        workers: state.workers,
+        riskDelayMin: state.riskDelayMin,
+        startDateIso: state.startDateIso
       };
     }
 
@@ -216,8 +285,34 @@
       const out = fn();
       history.commit(before, snapshot(), label);
       slipBaseline = { slipTaskId: state.slipTaskId, slipMin: state.slipMin };
+      settingsBaseline = settingsSnapshot();
       syncHistoryButtons();
       return out;
+    }
+
+    function settingsSnapshot() {
+      return {
+        policy: state.policy, focusBlockMin: state.focusBlockMin, breakMin: state.breakMin,
+        dayCapacityMin: state.dayCapacityMin, workers: state.workers,
+        riskDelayMin: state.riskDelayMin, startDateIso: state.startDateIso
+      };
+    }
+
+    function commitSettingsEdit() {
+      const after = snapshot();
+      const before = Object.assign({}, after, settingsBaseline);
+      const changed = [];
+      if (settingsBaseline.policy !== state.policy) changed.push(`policy ${state.policy}`);
+      if (settingsBaseline.focusBlockMin !== state.focusBlockMin) changed.push(`focus ${state.focusBlockMin}m`);
+      if (settingsBaseline.breakMin !== state.breakMin) changed.push(`break ${state.breakMin}m`);
+      if (settingsBaseline.dayCapacityMin !== state.dayCapacityMin) changed.push(`budget ${state.dayCapacityMin}m`);
+      if (settingsBaseline.workers !== state.workers) changed.push(`${state.workers} workers`);
+      if (settingsBaseline.riskDelayMin !== state.riskDelayMin) changed.push(`risk ${state.riskDelayMin}m`);
+      if (settingsBaseline.startDateIso !== state.startDateIso) changed.push(`start ${state.startDateIso}`);
+      if (!changed.length) return;
+      history.commit(before, after, `Set ${changed.join(", ")}`);
+      settingsBaseline = settingsSnapshot();
+      syncHistoryButtons();
     }
 
     function commitSlipEdit() {
@@ -228,6 +323,7 @@
       history.commit(before, after, label);
       slipBaseline = { slipTaskId: state.slipTaskId, slipMin: state.slipMin };
       syncHistoryButtons();
+      persist();
     }
 
     function restoreSnapshot(snap) {
@@ -235,7 +331,8 @@
         (snap.policy !== undefined && snap.policy !== state.policy) ||
         (snap.focusBlockMin !== undefined && snap.focusBlockMin !== state.focusBlockMin) ||
         (snap.breakMin !== undefined && snap.breakMin !== state.breakMin) ||
-        (snap.dayCapacityMin !== undefined && snap.dayCapacityMin !== state.dayCapacityMin);
+        (snap.dayCapacityMin !== undefined && snap.dayCapacityMin !== state.dayCapacityMin) ||
+        (snap.startDateIso !== undefined && snap.startDateIso !== state.startDateIso);
       state.presetId = snap.presetId;
       state.tasks = snap.tasks;
       state.doneTaskIds = snap.doneTaskIds;
@@ -247,7 +344,10 @@
       if (snap.breakMin !== undefined) state.breakMin = snap.breakMin;
       if (snap.dayCapacityMin !== undefined) state.dayCapacityMin = snap.dayCapacityMin;
       if (snap.workers !== undefined) state.workers = snap.workers;
+      if (snap.riskDelayMin !== undefined) state.riskDelayMin = snap.riskDelayMin;
+      if (snap.startDateIso !== undefined) state.startDateIso = snap.startDateIso;
       slipBaseline = { slipTaskId: snap.slipTaskId, slipMin: snap.slipMin };
+      settingsBaseline = settingsSnapshot();
       showError("");
       setInspectorStatus("");
       persist();
@@ -257,6 +357,8 @@
       setValue("break-min-input", String(state.breakMin));
       setValue("cap-min-input", String(state.dayCapacityMin));
       setValue("workers-input", String(state.workers));
+      setValue("risk-delay-input", String(state.riskDelayMin));
+      setValue("start-date-input", state.startDateIso);
       populateSlipDropdown();
       setValue("slip-min-input", String(state.slipMin));
       if (settingsChanged) resetFocus(false);
@@ -339,7 +441,7 @@
       state.slipTaskId = "";
       state.slipMin = 0;
       state.selectedTaskId = found.tasks[0] ? found.tasks[0].id : "";
-      state.focus = { index: 0, completed: 0, remainingSec: state.focusBlockMin * 60, running: false, intervalId: null, blockKey: null, exhausted: false };
+      state.focus = { index: 0, completed: 0, remainingSec: state.focusBlockMin * 60, running: false, intervalId: null, blockKey: null, exhausted: false, deadlineMs: null };
       setInspectorStatus("");
       showError("");
       persist();
@@ -378,6 +480,18 @@
       const res = computeCurrent();
       if (!res) return null;
       return res.schedule.cpm.nodeMap.get(id) || null;
+    }
+
+    // Every render re-derives the inspector's schedule readout from the same
+    // analysis the tables show, so a delay or edit can never leave the two
+    // disagreeing. The editable fields are untouched mid-typing.
+    function refreshInspectorCpm() {
+      const id = state.selectedTaskId;
+      if (!id || !state.tasks.some((t) => t.id === id)) return;
+      const n = selectedCpmNode(id);
+      setText("inspector-cpm", n
+        ? `ES ${n.esMin}m | EF ${n.efMin}m | Float ${n.totalFloatMin}m | ${n.isCritical ? "Critical (0m float)" : "Has float"}`
+        : "");
     }
 
     function fillInspector(id) {
@@ -566,12 +680,41 @@
       const idx = state.tasks.findIndex((t) => t.id === id);
       if (idx === -1) return;
       const title = (($("inspector-title") || {}).value || "").trim() || id;
-      const durationMin = Number(($("inspector-duration") || {}).value);
-      const weight = Number(($("inspector-weight") || {}).value);
+      const durRaw = (($("inspector-duration") || {}).value || "").trim();
+      const weightRaw = (($("inspector-weight") || {}).value || "").trim();
       const depsRaw = (($("inspector-deps") || {}).value || "").trim();
+      // Descriptive, ordered validation: each rejected edit names the exact
+      // problem before anything touches the plan.
+      const dur = Number(durRaw);
+      if (!durRaw || !Number.isFinite(dur) || dur <= 0) {
+        const msg = "Minutes must be a positive number up to 600.";
+        showError(msg); setInspectorStatus(msg); return;
+      }
+      if (dur > 600) {
+        const msg = `Minutes must be 600 or less (the largest value the planner accepts); ${durRaw} is too long.`;
+        showError(msg); setInspectorStatus(msg); return;
+      }
+      const weight = Number(weightRaw);
+      if (!weightRaw || !Number.isFinite(weight) || weight <= 0) {
+        const msg = "Priority must be a positive number up to 100.";
+        showError(msg); setInspectorStatus(msg); return;
+      }
+      if (weight > 100) {
+        const msg = `Priority must be 100 or less; ${weightRaw} is too high.`;
+        showError(msg); setInspectorStatus(msg); return;
+      }
       const deps = depsRaw ? depsRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
+      const unknown = deps.filter((dep) => !state.tasks.some((t) => t.id === dep));
+      if (unknown.length) {
+        const msg = `Unknown prerequisite${unknown.length > 1 ? "s" : ""}: ${unknown.join(", ")}. Use task ids from the graph, like ${state.tasks.slice(0, 2).map((t) => t.id).join(", ")}.`;
+        showError(msg); setInspectorStatus(msg); return;
+      }
+      if (deps.indexOf(id) !== -1) {
+        const msg = `${id} cannot depend on itself.`;
+        showError(msg); setInspectorStatus(msg); return;
+      }
       const candidate = state.tasks.slice();
-      candidate[idx] = Object.assign({}, candidate[idx], { title, durationMin, weight, deps });
+      candidate[idx] = Object.assign({}, candidate[idx], { title, durationMin: dur, weight, deps });
       try {
         Engine.validateAndTopoSort(candidate);
         mutate(`Edit ${id}`, () => { state.tasks = candidate; });
@@ -688,14 +831,29 @@
       const move = advice && advice.moves.find((m) => m.moveId === moveId);
       if (!move) { showToast("That move no longer applies to this plan."); return false; }
       const verb = move.kind === "split2" ? `Split ${move.taskId}` : `Trim ${move.taskId} by ${move.cutMin}m`;
+      // The engine re-validates every move against the live plan (unknown
+      // task, stale duration, malformed split). A rejected move records no
+      // history step and says why instead of corrupting the graph.
+      let result = null;
+      let failure = "";
       mutate(verb, () => {
-        const result = Engine.applyCrashMove(state.tasks, move);
-        state.tasks = result.tasks;
-        if (result.partIds.length) {
-          if (state.selectedTaskId === move.taskId) state.selectedTaskId = result.partIds[0];
-          if (state.slipTaskId === move.taskId) state.slipTaskId = result.partIds[0];
+        try {
+          result = Engine.applyCrashMove(state.tasks, move);
+          state.tasks = result.tasks;
+          if (result.partIds.length) {
+            if (state.selectedTaskId === move.taskId) state.selectedTaskId = result.partIds[0];
+            if (state.slipTaskId === move.taskId) state.slipTaskId = result.partIds[0];
+          }
+        } catch (err) {
+          failure = err.message;
+          result = null;
         }
       });
+      if (!result) {
+        showError(`This move was rejected: ${failure}`);
+        showToast(`This move was rejected: ${failure}`);
+        return false;
+      }
       persist();
       populateSlipDropdown();
       fillInspector(state.selectedTaskId);
@@ -758,7 +916,256 @@
       }
     }
 
-    /* ---------------------- share links and print -------------------- */
+    /* --------------- one-click experiments and bottleneck lab --------------- */
+
+    function setGraphProof(text) {
+      setText("graph-proof", text || "");
+    }
+
+    // Deterministic float demo: delay a task whose float absorbs 15m, so the
+    // judge sees float do its job without the finish moving.
+    function demoAbsorbDelay() {
+      const remaining = activeTasks();
+      if (!remaining.length) { setGraphProof("Add a task first."); return; }
+      const baseline = Engine.analyzeCriticalPath(remaining, activeSlip());
+      const victim = baseline.nodes
+        .filter((n) => !n.isCritical && n.totalFloatMin >= 15)
+        .sort((a, b) => (b.totalFloatMin - a.totalFloatMin) || a.id.localeCompare(b.id))[0];
+      if (!victim) {
+        setGraphProof("Every task here is critical with 0m float, so nothing can absorb a delay. Push the deadline instead.");
+        return;
+      }
+      const wasOnVictim = state.slipTaskId === victim.id;
+      mutate(`Demo: delay ${victim.id} by 15m`, () => {
+        state.slipTaskId = victim.id;
+        state.slipMin = wasOnVictim ? state.slipMin + 15 : 15;
+      });
+      setValue("slip-task-select", state.slipTaskId);
+      setValue("slip-min-input", String(state.slipMin));
+      state.shockPulse = true;
+      render();
+      const after = Engine.analyzeCriticalPath(remaining, activeSlip());
+      const shift = after.projectMakespanMin - baseline.projectMakespanMin;
+      setGraphProof(`${victim.id} had ${victim.totalFloatMin}m of float, so the 15m delay fit inside it: the finish stays at ${after.projectMakespanMin}m (${shift === 0 ? "0m moved" : `+${shift}m moved`}).`);
+      setCapyMood("happy", `Capybara audit: ${victim.id}'s ${victim.totalFloatMin}m float absorbed the whole 15m delay.`);
+    }
+
+    // Deterministic deadline demo: delay a critical task so the finish moves
+    // minute for minute.
+    function demoPushDeadline() {
+      const remaining = activeTasks();
+      if (!remaining.length) { setGraphProof("Add a task first."); return; }
+      const baseline = Engine.analyzeCriticalPath(remaining, activeSlip());
+      const victim = baseline.nodes
+        .filter((n) => n.isCritical)
+        .sort((a, b) => (b.totalFloatMin - a.totalFloatMin) || a.id.localeCompare(b.id))[0];
+      if (!victim) { setGraphProof("No critical task found."); return; }
+      const wasOnVictim = state.slipTaskId === victim.id;
+      mutate(`Demo: delay ${victim.id} by 15m`, () => {
+        state.slipTaskId = victim.id;
+        state.slipMin = wasOnVictim ? state.slipMin + 15 : 15;
+      });
+      setValue("slip-task-select", state.slipTaskId);
+      setValue("slip-min-input", String(state.slipMin));
+      state.shockPulse = true;
+      render();
+      const after = Engine.analyzeCriticalPath(remaining, activeSlip());
+      const shift = after.projectMakespanMin - baseline.projectMakespanMin;
+      setGraphProof(`${victim.id} is critical with 0m float, so +15m pushed the finish from ${baseline.projectMakespanMin}m to ${after.projectMakespanMin}m (+${shift}m, minute for minute).`);
+      setCapyMood("worried", `Capybara alert: ${victim.id} has no float, so the whole 15m landed on the finish.`);
+    }
+
+    // Direct advisor preview: name the best exact move and select its task so
+    // the Bottleneck Lab and advisor both point at it.
+    function demoPreviewFix() {
+      const remaining = activeTasks();
+      if (!remaining.length) { setGraphProof("Add a task first."); return; }
+      const advice = Engine.adviseCrash(remaining, { slip: activeSlip() });
+      if (!advice.best) {
+        setGraphProof(advice.blockedByTiedChains
+          ? `${advice.criticalPathCount} equal chains set the finish, so no single move can shorten it. Shorten two chains or split a shared task.`
+          : "No exact move shortens this plan's finish.");
+        return;
+      }
+      const move = advice.best;
+      if (state.tasks.some((t) => t.id === move.taskId)) selectTask(move.taskId);
+      setGraphProof(`Best exact fix: ${move.label.toLowerCase()} on ${move.taskId} moves the finish ${move.beforeMin}m to ${move.afterMin}m (${move.savedMin}m saved). Apply it from the crash advisor.`);
+      setCapyMood("party", `Capybara forecast: ${move.taskId} ${move.label.toLowerCase()} buys back ${move.savedMin}m.`);
+    }
+
+    // ---- Bottleneck lab: exact response curve for the selected task ----
+
+    function svgNode(tag, attrs, text) {
+      const node = d.createElementNS ? d.createElementNS("http://www.w3.org/2000/svg", tag) : null;
+      if (!node) return null;
+      if (attrs) for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, String(v));
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function clearSvg(svg) {
+      if (!svg) return;
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+    }
+
+    function renderWhatIf() {
+      const svg = $("svg-whatif");
+      const task = state.tasks.find((t) => t.id === state.selectedTaskId);
+      if (!svg) return;
+      clearSvg(svg);
+      setText("whatif-task", task ? `${task.id}: ${task.title}` : "");
+      if (!task) {
+        setText("whatif-result", "");
+        setText("whatif-proof", "Select a task to preview its effect on the finish.");
+        const apply = $("btn-apply-whatif");
+        if (apply) apply.disabled = true;
+        return;
+      }
+      if (!state.tasks.some((t) => t.id === state.selectedTaskId) || state.whatifDeltaMin === undefined) {
+        state.whatifDeltaMin = 0;
+      }
+      const slip = activeSlip();
+      let bn;
+      try {
+        bn = Engine.analyzeBottleneck(activeTasks(), task.id, { slip });
+      } catch (_err) {
+        setText("whatif-proof", "This task is not in the remaining plan.");
+        return;
+      }
+      const deltaMin = Math.max(bn.minDeltaMin, Math.min(bn.maxDeltaMin, state.whatifDeltaMin));
+      const previewDur = task.durationMin + deltaMin;
+      const previewMakespan = Math.max(bn.rivalMin, bn.throughMin + deltaMin);
+      const previewShift = previewMakespan - bn.baselineMin;
+
+      // Slider + output + buttons.
+      const slider = $("whatif-slider");
+      if (slider) {
+        slider.min = String(Math.round(bn.minDeltaMin));
+        slider.max = String(Math.round(bn.maxDeltaMin));
+        if (Number(slider.value) !== deltaMin) slider.value = String(Math.round(deltaMin));
+      }
+      const result = $("whatif-result");
+      if (result) {
+        result.textContent = `At ${previewDur}m: finish ${previewMakespan}m ` +
+          (previewShift === 0 ? "(no change)" : `(${previewShift > 0 ? "+" : ""}${Math.round(previewShift * 100) / 100}m vs ${bn.baselineMin}m)`);
+        result.setAttribute("data-state", previewShift > 0 ? "pushed" : previewShift < 0 ? "saved" : "steady");
+      }
+      const apply = $("btn-apply-whatif");
+      if (apply) apply.disabled = deltaMin === 0;
+
+      // Persistent causal explanation.
+      const rivalLabel = bn.rivalChain.length ? bn.rivalChain.join(" > ") : "the rest of the plan";
+      const floorCrossed = deltaMin < bn.crossoverDeltaMin;
+      let proof;
+      if (bn.floatMin === 0 && deltaMin === 0) {
+        proof = `${task.id} sets the finish at ${bn.baselineMin}m with 0m float: every minute added moves the finish 1:1, and cutting it helps until ${bn.rivalMin}m.`;
+      } else if (deltaMin === 0) {
+        proof = `${task.id} holds ${bn.floatMin}m of float at a ${bn.baselineMin}m finish. Changes inside ${bn.crossoverDeltaMin >= 0 ? `±` : ""}${Math.abs(bn.crossoverDeltaMin)}m never reach the deadline; the crossover is at ${task.durationMin + bn.crossoverDeltaMin}m.`;
+      } else if (previewShift === 0) {
+        proof = `${task.id} at ${previewDur}m still finishes at ${bn.baselineMin}m: the ${Math.abs(deltaMin)}m change fits inside the ${bn.floatMin}m of float.`;
+      } else if (floorCrossed) {
+        proof = `At ${previewDur}m the rival chain ${rivalLabel} (${bn.rivalMin}m) sets the finish, so ${previewShift > 0 ? "stretching" : "cutting"} ${task.id} further cannot move the deadline past ${bn.rivalMin}m.`;
+      } else {
+        proof = `At ${previewDur}m, ${task.id} moves the finish to ${previewMakespan}m (${previewShift > 0 ? "+" : ""}${Math.round(previewShift * 100) / 100}m). The floor is the rival chain ${rivalLabel} at ${bn.rivalMin}m.`;
+      }
+      setText("whatif-proof", proof);
+
+      // ---- exact response curve ----
+      const W = 460, H = 132;
+      const padL = 40, padR = 14, padT = 16, padB = 24;
+      const lo = bn.minDeltaMin, hi = bn.maxDeltaMin;
+      const yMin = Math.min(bn.rivalMin, bn.baselineMin, ...bn.points.map((p) => p.makespanMin));
+      const yMax = Math.max(bn.rivalMin, bn.baselineMin, ...bn.points.map((p) => p.makespanMin));
+      const spanX = Math.max(1e-9, hi - lo);
+      const spanY = Math.max(1e-9, yMax - yMin);
+      const xOf = (delta) => padL + ((delta - lo) / spanX) * (W - padL - padR);
+      const yOf = (m) => padT + (1 - (m - yMin) / spanY) * (H - padT - padB);
+
+      const frame = svgNode("g", { class: "whatif-plot-body" });
+      // Rival floor (dashed) with label.
+      frame.appendChild(svgNode("line", {
+        x1: padL, y1: yOf(bn.rivalMin), x2: W - padR, y2: yOf(bn.rivalMin),
+        stroke: "#2dd4bf", "stroke-dasharray": "4 3", "stroke-width": 1.2, opacity: 0.85
+      }));
+      frame.appendChild(svgNode("text", {
+        x: padL + 4, y: yOf(bn.rivalMin) - 3, fill: "#2dd4bf", "font-size": 9
+      }, `rival floor ${Math.round(bn.rivalMin)}m`));
+      // Exact response polyline: max(rival, through + delta).
+      const pts = bn.points.map((p) => `${xOf(p.deltaMin).toFixed(1)},${yOf(p.makespanMin).toFixed(1)}`).join(" ");
+      frame.appendChild(svgNode("polyline", {
+        points: pts, fill: "none", stroke: "#fb7185", "stroke-width": 2, "stroke-linejoin": "round"
+      }));
+      // Baseline marker at delta 0.
+      frame.appendChild(svgNode("circle", {
+        cx: xOf(0), cy: yOf(bn.baselineMin), r: 3.4, fill: "#a3abb6"
+      }));
+      frame.appendChild(svgNode("text", {
+        x: xOf(0), y: yOf(bn.baselineMin) + 12, fill: "#a3abb6", "font-size": 9, "text-anchor": "middle"
+      }, `now ${Math.round(bn.baselineMin)}m`));
+      // Crossover marker.
+      if (bn.crossoverDeltaMin >= lo && bn.crossoverDeltaMin <= hi) {
+        frame.appendChild(svgNode("circle", {
+          cx: xOf(bn.crossoverDeltaMin), cy: yOf(bn.rivalMin), r: 3.4,
+          fill: "#101315", stroke: "#2dd4bf", "stroke-width": 1.6
+        }));
+        frame.appendChild(svgNode("text", {
+          x: xOf(bn.crossoverDeltaMin), y: H - padB + 14, fill: "#2dd4bf", "font-size": 9, "text-anchor": "middle"
+        }, `crossover ${Math.round(task.durationMin + bn.crossoverDeltaMin)}m`));
+      }
+      // Preview marker.
+      if (deltaMin !== 0) {
+        frame.appendChild(svgNode("circle", {
+          cx: xOf(deltaMin), cy: yOf(previewMakespan), r: 4.2, fill: "#38bdf8", stroke: "#0e0f11", "stroke-width": 1
+        }));
+        frame.appendChild(svgNode("text", {
+          x: Math.min(W - padR, xOf(deltaMin) + 6), y: yOf(previewMakespan) - 6,
+          fill: "#38bdf8", "font-size": 9
+        }, `${Math.round(previewMakespan)}m`));
+      }
+      // Axes.
+      frame.appendChild(svgNode("line", { x1: padL, y1: padT, x2: padL, y2: H - padB, stroke: "#24282e", "stroke-width": 1 }));
+      frame.appendChild(svgNode("line", { x1: padL, y1: H - padB, x2: W - padR, y2: H - padB, stroke: "#24282e", "stroke-width": 1 }));
+      const ticks = [lo, 0, hi].filter((v, i, a) => a.indexOf(v) === i && v >= lo && v <= hi).sort((a, b) => a - b);
+      for (const t of ticks) {
+        frame.appendChild(svgNode("text", {
+          x: xOf(t), y: H - padB + 12, fill: "#a3abb6", "font-size": 9, "text-anchor": "middle"
+        }, `${Math.round(task.durationMin + t)}m`));
+      }
+      frame.appendChild(svgNode("title", null,
+        `Deadline response for ${task.id}: finish = max(rival ${Math.round(bn.rivalMin)}m, ${Math.round(bn.throughMin)}m + change). Crossover at ${Math.round(task.durationMin + bn.crossoverDeltaMin)}m.`));
+      svg.appendChild(frame);
+    }
+
+    function onWhatIfSlider() {
+      const slider = $("whatif-slider");
+      if (!slider) return;
+      const n = Number(slider.value);
+      state.whatifDeltaMin = Number.isFinite(n) ? n : 0;
+      renderWhatIf();
+    }
+
+    function applyWhatIf() {
+      const task = state.tasks.find((t) => t.id === state.selectedTaskId);
+      if (!task) return;
+      const newDur = Math.round((task.durationMin + state.whatifDeltaMin) * 100) / 100;
+      if (newDur <= 0 || Math.abs(newDur - task.durationMin) < 1e-9) return;
+      mutate(`Change ${task.id} to ${newDur}m`, () => {
+        state.tasks = state.tasks.map((t) => (t.id === task.id ? Object.assign({}, t, { durationMin: newDur }) : t));
+      });
+      state.whatifDeltaMin = 0;
+      persist();
+      populateSlipDropdown();
+      fillInspector(task.id);
+      render();
+      setInspectorStatus(`${task.id} changed to ${newDur}m. Undo restores the previous duration.`);
+    }
+
+    function resetWhatIf() {
+      state.whatifDeltaMin = 0;
+      renderWhatIf();
+    }
+
+
 
     function planSettings() {
       return {
@@ -797,7 +1204,7 @@
       const plan = result.plan;
       mutate("Load shared plan", () => {
         clearTimerInterval();
-        state.focus = { index: 0, completed: 0, remainingSec: plan.settings.focusBlockMin * 60, running: false, intervalId: null, blockKey: null, exhausted: false };
+        state.focus = { index: 0, completed: 0, remainingSec: plan.settings.focusBlockMin * 60, running: false, intervalId: null, blockKey: null, exhausted: false, deadlineMs: null };
         state.presetId = "shared";
         state.tasks = plan.tasks;
         state.doneTaskIds = plan.doneTaskIds;
@@ -977,7 +1384,7 @@
       const onInput = (id, fn) => {
         const el = $(id);
         if (!el) return;
-        el.addEventListener("change", () => { fn(el.value); render(); });
+        el.addEventListener("change", () => { fn(el.value); commitSettingsEdit(); render(); });
         el.addEventListener("input", () => { fn(el.value); render(); });
       };
 
@@ -1008,6 +1415,12 @@
         const el = $(id);
         if (el) el.addEventListener("change", () => { commitSlipEdit(); reactToDelay(); });
       });
+      // Settings persist the moment they settle, even before a re-render.
+      ["policy-select", "focus-min-input", "break-min-input", "cap-min-input",
+        "start-date-input", "workers-input", "risk-delay-input"].forEach((id) => {
+        const el = $(id);
+        if (el) el.addEventListener("change", () => { persist(); });
+      });
       onInput("workers-input", (v) => {
         const n = Number(v);
         state.workers = Number.isFinite(n) && n > 0 ? Math.max(1, Math.min(8, Math.floor(n))) : 1;
@@ -1024,8 +1437,15 @@
           while (state.tasks.some((t) => t.id === `T${autoNumber}`)) autoNumber += 1;
           const id = (($("new-task-id") || {}).value || "").trim() || `T${autoNumber}`;
           const title = (($("new-task-title") || {}).value || "").trim() || `Custom Task ${id}`;
-          const dur = Number((($("new-task-dur") || {}).value || "30"));
-          const wt = Number((($("new-task-weight") || {}).value || "7"));
+          // The displayed limits (1..600 minutes, 1..100 priority) are
+          // enforced even when the browser number input is bypassed.
+          const clampNum = (raw, lo, hi, fb) => {
+            const n = Number(raw);
+            if (raw === "" || !Number.isFinite(n)) return fb;
+            return Math.min(hi, Math.max(lo, n));
+          };
+          const dur = clampNum((($("new-task-dur") || {}).value), 1, 600, 30);
+          const wt = clampNum((($("new-task-weight") || {}).value), 1, 100, 7);
           const depsRaw = (($("new-task-deps") || {}).value || "").trim();
           const deps = depsRaw ? depsRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
           const candidate = state.tasks.concat([{ id, title, durationMin: dur, weight: wt, category: "Custom", deps }]);
@@ -1134,7 +1554,7 @@
             delayMin: state.riskDelayMin, slip,
             focusBlockMin: state.focusBlockMin, breakMin: state.breakMin,
             dayCapacityMin: state.dayCapacityMin, startDateIso: state.startDateIso,
-            utcOffsetMin: utcOffsetMin()
+            utcOffsetMin: utcOffsetFor
           });
           triggerDownload("cadencedag_diagnostics.json", JSON.stringify(payload, null, 2), "application/json");
         });
@@ -1210,6 +1630,16 @@
       bindClick("btn-shock", shockSelected);
       bindClick("btn-clear-delay", clearDelay);
       bindClick("btn-share-link", copyShareLink);
+      bindClick("btn-demo-slack", demoAbsorbDelay);
+      bindClick("btn-demo-critical", demoPushDeadline);
+      bindClick("btn-demo-crash", demoPreviewFix);
+      const whatifSlider = $("whatif-slider");
+      if (whatifSlider) {
+        whatifSlider.addEventListener("input", onWhatIfSlider);
+        whatifSlider.addEventListener("change", onWhatIfSlider);
+      }
+      bindClick("btn-apply-whatif", applyWhatIf);
+      bindClick("btn-reset-whatif", resetWhatIf);
       bindClick("btn-shortcuts", openShortcuts);
       bindClick("btn-shortcuts-close", () => {
         const dialog = $("shortcut-dialog");
@@ -1270,6 +1700,12 @@
           cancelLater(resizeTimer);
           resizeTimer = later(render, 120);
         });
+        // Background tabs throttle interval callbacks. The countdown derives
+        // from an absolute deadline, so returning to the tab simply reads the
+        // true remaining time at once instead of waiting for the next tick.
+        view.addEventListener("visibilitychange", () => {
+          if (d.visibilityState === "visible" && state.focus.running) tickTimer();
+        });
       }
     }
 
@@ -1295,6 +1731,18 @@
       return Number.isFinite(off) ? off : 0;
     }
 
+    // The true per-day offset: the engine accepts a function of the day
+    // index, and this resolves each plan day to its own calendar date, so a
+    // daylight saving transition inside a plan keeps every day at 09:00
+    // local instead of drifting an hour after the shift. Noon avoids the
+    // midnight-adjacent ambiguity of getTimezoneOffset.
+    function utcOffsetFor(dayIdx) {
+      const parts = String(state.startDateIso).split("-").map(Number);
+      const day = new Date(parts[0] || 2026, (parts[1] || 1) - 1, (parts[2] || 1) + (Number.isFinite(Number(dayIdx)) ? Number(dayIdx) : 0), 12, 0, 0);
+      const off = day.getTimezoneOffset();
+      return Number.isFinite(off) ? off : 0;
+    }
+
     function computeCurrent() {
       try {
         const remaining = activeTasks();
@@ -1311,7 +1759,7 @@
           dayCapacityMin: state.dayCapacityMin,
           dayStartHour: state.dayStartHour,
           startDateIso: state.startDateIso,
-          utcOffsetMin: utcOffsetMin(),
+          utcOffsetMin: utcOffsetFor,
           slip: state.slipTaskId && state.slipMin > 0 ? { taskId: state.slipTaskId, slipMin: state.slipMin } : null
         });
         showError("");
@@ -1354,6 +1802,10 @@
       }
     }
 
+    // The countdown anchors to an absolute deadline timestamp instead of
+    // decrementing once per interval callback: throttled background tabs,
+    // stalled timers and sleeping machines all recover exactly, because the
+    // remaining seconds are recomputed from the wall clock on every tick.
     function startTimer() {
       const blocks = focusBlocks();
       if (state.focus.exhausted || !blocks.length) {
@@ -1371,6 +1823,7 @@
         state.focus.remainingSec = expected;
       }
       state.focus.blockKey = `${current.taskId} p${current.part}`;
+      state.focus.deadlineMs = Date.now() + state.focus.remainingSec * 1000;
       state.focus.running = true;
       state.focus.intervalId = d.defaultView && d.defaultView.setInterval
         ? d.defaultView.setInterval(tickTimer, 1000)
@@ -1383,6 +1836,12 @@
     }
 
     function pauseTimer() {
+      if (state.focus.running && state.focus.deadlineMs !== null) {
+        // Freeze the remaining seconds at the true wall-clock remainder, so
+        // resume continues from where the block actually was.
+        state.focus.remainingSec = Engine.remainingTimerSeconds(state.focus.deadlineMs, Date.now());
+      }
+      state.focus.deadlineMs = null;
       state.focus.running = false;
       clearTimerInterval();
       updateFocusUI();
@@ -1397,6 +1856,7 @@
       state.focus.remainingSec = blocks.length ? blocks[0].durationMin * 60 : state.focusBlockMin * 60;
       state.focus.blockKey = blocks.length ? `${blocks[0].taskId} p${blocks[0].part}` : null;
       state.focus.running = false;
+      state.focus.deadlineMs = null;
       if (announce) setText("focus-status", "Timer reset. Ready for a fresh focus block.");
       updateFocusUI();
     }
@@ -1404,14 +1864,22 @@
     // The countdown must always match the scheduled block it points at. After
     // any queue recompute (task done, edited, deleted, preset changed) the
     // saved block identity rebases onto the matching remaining block, or
-    // cleanly to the first block when that block no longer exists.
+    // cleanly to the first block when that block no longer exists. A running
+    // timer re-anchors its absolute deadline whenever the block shifts.
     function syncFocusToQueue(blocks) {
       const f = state.focus;
       if (f.blockKey) {
         const at = blocks.findIndex((b) => `${b.taskId} p${b.part}` === f.blockKey);
         if (at !== -1) {
-          if (f.index !== at) f.index = at;
-          f.remainingSec = Math.min(f.remainingSec > 0 ? f.remainingSec : blocks[at].durationMin * 60, blocks[at].durationMin * 60);
+          const moved = f.index !== at;
+          if (moved) f.index = at;
+          const capped = Math.min(f.remainingSec > 0 ? f.remainingSec : blocks[at].durationMin * 60, blocks[at].durationMin * 60);
+          if (capped !== f.remainingSec || (moved && f.running)) {
+            f.remainingSec = capped;
+            // The live block's identity or length changed under a running
+            // timer: restart the wall-clock anchor from the new remainder.
+            if (f.running) f.deadlineMs = Date.now() + f.remainingSec * 1000;
+          }
           return;
         }
       }
@@ -1419,16 +1887,19 @@
       f.index = 0;
       f.remainingSec = blocks.length ? blocks[0].durationMin * 60 : 0;
       f.blockKey = blocks.length ? `${blocks[0].taskId} p${blocks[0].part}` : null;
+      if (f.running) f.deadlineMs = Date.now() + f.remainingSec * 1000;
     }
 
     // Focus length changes rebase the current block's countdown so the ring
-    // and seconds never disagree with the new block length.
+    // and seconds never disagree with the new block length. A running timer
+    // re-anchors its absolute deadline from the new remainder.
     function syncFocusToBlockLength() {
       const blocks = focusBlocks();
       if (!blocks.length) return;
       const current = blocks[state.focus.index] || blocks[0];
       state.focus.remainingSec = current.durationMin * 60;
       state.focus.blockKey = `${current.taskId} p${current.part}`;
+      if (state.focus.running) state.focus.deadlineMs = Date.now() + state.focus.remainingSec * 1000;
     }
 
     function chime() {
@@ -1461,8 +1932,8 @@
     }
 
     function tickTimer() {
-      if (!state.focus.running) return;
-      state.focus.remainingSec -= 1;
+      if (!state.focus.running || state.focus.deadlineMs === null) return;
+      state.focus.remainingSec = Engine.remainingTimerSeconds(state.focus.deadlineMs, Date.now());
       if (state.focus.remainingSec <= 0) {
         state.focus.remainingSec = 0;
         completeBlock(true);
@@ -1630,7 +2101,7 @@
       });
       const cpm = multi.cpm;
 
-      setText("kpi-paths", String(paths.pathCount));
+      setText("kpi-paths", paths.pathCountExact);
       setText("kpi-paths-sub", `${paths.makespanMin}m longest chain across ${cpm.nodes.length} nodes`);
       setText("kpi-parallel", `${multi.makespanMin}m`);
       const workerWord = multi.workers === 1 ? "worker" : "workers";
@@ -1655,6 +2126,11 @@
           pathsBody.appendChild(tr);
         });
       }
+      // The count is exact via dynamic programming; the table shows at most
+      // maxPaths materialized chains and says so when truncated.
+      setText("paths-limit-status", paths.truncated
+        ? `Showing ${paths.criticalPaths.length} of ${paths.pathCountExact} equal-length chains (the list is capped; the count above is exact).`
+        : `${paths.pathCountExact} equal-length chain${paths.pathCount === 1 ? "" : "s"} set the finish.`);
 
       const ledgerBody = $("worker-ledger-body");
       if (ledgerBody) {
@@ -1725,9 +2201,12 @@
       if (riskBody) riskBody.innerHTML = `<tr class="empty-row"><td colspan="6">${escapeHtml(reason)}</td></tr>`;
       ["kpi-paths", "kpi-parallel", "kpi-util", "kpi-slack", "kpi-worst", "kpi-mean-delay"].forEach((id) => setText(id, "-"));
       ["kpi-paths-sub", "kpi-parallel-sub", "kpi-util-sub", "kpi-slack-sub", "kpi-worst-sub", "kpi-mean-delay-sub"].forEach((id) => setText(id, reason));
+      setText("paths-limit-status", reason);
+      setText("graph-proof", "");
       setText("slip-summary", reason);
       renderAdvisor([]);
       renderNewTaskChips();
+      renderWhatIf();
       const printBody = $("print-body");
       if (printBody) printBody.innerHTML = "";
       setText("print-summary", reason);
@@ -1777,7 +2256,7 @@
       setText("kpi-crit-count", `${cpm.criticalTaskIds.length} / ${cpm.nodes.length}`);
       // Parallel critical tasks are not a sequence, so show one real chain.
       const chains = Engine.enumerateCriticalPaths(remaining, activeSlip());
-      const extraChains = chains.pathCount - 1;
+      const extraChains = Number(BigInt(chains.pathCountExact) - 1n);
       setText("kpi-crit-sub", chains.criticalPaths[0].join(" > ") + (extraChains > 0 ? ` (+${extraChains} tied)` : ""));
       setText("kpi-blocks", `${schedule.totalFocusBlocks} blocks`);
       setText(
@@ -1861,6 +2340,8 @@
       // identity, or cleanly onto the first remaining block when that block
       // completed or was removed.
       syncFocusToQueue(schedule.blocks);
+      refreshInspectorCpm();
+      renderWhatIf();
       updateFocusUI();
       restoreKeyboardFocus();
     }
@@ -1880,6 +2361,13 @@
       syncPresetSelect();
       const dateInput = $("start-date-input");
       if (dateInput) dateInput.value = state.startDateIso;
+      // Persisted planning settings reach their inputs before the first render.
+      setValue("policy-select", state.policy);
+      setValue("focus-min-input", String(state.focusBlockMin));
+      setValue("break-min-input", String(state.breakMin));
+      setValue("cap-min-input", String(state.dayCapacityMin));
+      setValue("workers-input", String(state.workers));
+      setValue("risk-delay-input", String(state.riskDelayMin));
       populateSlipDropdown();
       bindTabs();
       bindInputs();
@@ -1899,7 +2387,7 @@
       if (hash.indexOf("#plan=") === 0) importHash(hash);
     }
 
-    return { init, render, applyPreset, state,
+    return { init, render, applyPreset, state, utcOffsetFor, utcOffsetMin,
       selectTask, saveTaskEdits, deleteSelectedTask, toggleDone,
       completeBlock, skipBlock, resetFocus, comparePolicies: () => Engine.comparePolicies(activeTasks()),
       undo, redo, applyCrash, shockSelected, clearDelay, importHash, shareHash, handleKey, toggleTimer,

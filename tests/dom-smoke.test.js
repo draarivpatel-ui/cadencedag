@@ -106,7 +106,7 @@ test("DOM smoke: CadenceDAG binds all controls, handles cycle errors, slippage, 
   const ctrl = sandbox.CadenceDagApp.createController(doc);
   ctrl.init();
 
-  assert.equal(byId.get("preset-select").options.length, 4);
+  assert.equal(byId.get("preset-select").options.length, 5);
   assert.ok(byId.get("kpi-makespan").textContent.includes("min"));
   assert.ok(byId.get("svg-dag").children.length > 5);
   assert.ok(byId.get("svg-gantt").children.length > 5);
@@ -119,8 +119,8 @@ test("DOM smoke: CadenceDAG binds all controls, handles cycle errors, slippage, 
   assert.ok(byId.get("error-banner").classList.contains("is-visible"));
 
   // Inject valid downstream node -> updates table cleanly
-  byId.get("new-task-id").value = "T10";
-  byId.get("new-task-deps").value = "T9";
+  byId.get("new-task-id").value = "C10";
+  byId.get("new-task-deps").value = "C9";
   byId.get("btn-add-task").dispatchEvent({ type: "click" });
   assert.ok(!byId.get("error-banner").classList.contains("is-visible"));
   assert.equal(byId.get("slack-table-body").children.length, 10);

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
-  <title>CadenceDAG | Offline Critical-Path &amp; Pomodoro Planner</title>
+  <title>CadenceDAG</title>
   <meta name="description" content="Offline critical path planner with a what-if crash advisor, delay shockwave, Pomodoro focus timer, shareable plan links and RFC 5545 calendar export.">
   <meta name="author" content="Aariv Patel">
   <meta name="color-scheme" content="dark">
@@ -24,6 +24,8 @@
       </svg>
       <h1>CadenceDAG</h1>
     </div>
+
+    <span id="storage-status" class="storage-status" role="status">Saved locally</span>
 
     <div class="plan-picker">
       <label class="visually-hidden" for="preset-select">Sample plan</label>
@@ -71,7 +73,7 @@
   <main class="studio">
     <section class="readouts" aria-label="Plan summary">
       <div class="readout readout-lead">
-        <div class="kpi-label">Finish</div>
+        <div class="kpi-label">Earliest finish</div>
         <div class="kpi-value" id="kpi-makespan">-</div>
         <div class="kpi-sub" id="kpi-makespan-sub">-</div>
       </div>
@@ -139,6 +141,13 @@
           </details>
         </div>
 
+        <div class="experiment-bar" role="group" aria-label="Try a scheduling experiment">
+          <button id="btn-demo-slack" class="experiment-btn" type="button"><span class="experiment-dot safe"></span>Absorb a delay</button>
+          <button id="btn-demo-critical" class="experiment-btn" type="button"><span class="experiment-dot risk"></span>Push the deadline</button>
+          <button id="btn-demo-crash" class="experiment-btn" type="button"><span class="experiment-dot save"></span>Preview the best fix</button>
+          <span id="graph-proof" class="graph-proof" role="status"></span>
+        </div>
+
         <div id="dag-frame" class="canvas-frame" tabindex="-1">
           <svg id="svg-dag" class="dag-svg" viewBox="0 0 800 300" role="group" aria-label="Directed acyclic graph of tasks and critical path"></svg>
         </div>
@@ -156,7 +165,7 @@
             <button id="btn-clear-delay" class="btn" type="button">Clear</button>
           </div>
           <p id="slip-summary" class="slip-summary" role="status"></p>
-          <div id="capybara-easter" class="capybara-nook" role="button" tabindex="0" data-mood="calm" aria-label="Pet the Capybara Chief Slack Auditor" title="Secret slack mascot">
+          <div id="capybara-easter" class="capybara-nook" role="button" tabindex="0" data-mood="calm" aria-label="Pet the Capybara Chief Slack Auditor" title="Your float auditor">
             <span class="capy-text">
               <strong>Capybara Chief Slack Auditor</strong>
               <span id="capybara-status" role="status">Capybara check: staying calm around 0m float.</span>
@@ -193,6 +202,20 @@
             </span>
           </div>
         </div>
+
+        <section class="whatif-card" aria-labelledby="whatif-head">
+          <div class="whatif-head"><h2 id="whatif-head">Bottleneck lab</h2><span id="whatif-task" class="mono"></span></div>
+          <div class="whatif-layout">
+            <div class="whatif-controls">
+              <label for="whatif-slider">Change selected task duration</label>
+              <div class="whatif-slider-row"><span class="mono">Faster</span><input id="whatif-slider" type="range" min="-30" max="120" step="1" value="0"><span class="mono">Slower</span></div>
+              <output id="whatif-result" for="whatif-slider" class="whatif-result" aria-live="polite"></output>
+              <div class="btn-row"><button id="btn-apply-whatif" class="btn btn-primary" type="button" disabled>Apply change</button><button id="btn-reset-whatif" class="btn btn-quiet" type="button">Reset preview</button></div>
+            </div>
+            <div class="whatif-plot"><svg id="svg-whatif" viewBox="0 0 460 132" role="img" aria-label="Exact deadline response to selected task duration"></svg></div>
+          </div>
+          <p id="whatif-proof" class="whatif-proof"></p>
+        </section>
       </div>
 
       <aside class="rail" aria-label="Task tools">
@@ -233,6 +256,7 @@
 
         <section class="rail-card advisor-card" id="advisor-card" aria-labelledby="advisor-head">
           <h2 id="advisor-head">Crash advisor</h2>
+          <span class="model-note">Exact single-move search. Splits need two available workers and 5m handoff per half.</span>
           <div id="advisor-lens" class="lens" role="group" aria-label="Crash move">
             <button class="lens-btn" type="button" data-lens="all" aria-pressed="true">Best</button>
             <button class="lens-btn" type="button" data-lens="trim10" aria-pressed="false">10m</button>
@@ -394,7 +418,8 @@
       </div>
       <div class="card-pair">
         <div class="card">
-          <h2>Critical chains</h2>
+        <h2>Critical chains</h2>
+        <p id="paths-limit-status" class="status-line" role="status"></p>
           <div class="table-wrap">
             <table>
               <caption class="visually-hidden">Enumerated longest dependency chains</caption>

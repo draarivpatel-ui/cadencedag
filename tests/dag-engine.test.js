@@ -2,8 +2,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const Engine = require("../js/dag-engine.js");
 
-test("PRESET_WORKFLOWS contains 4 valid acyclic DAG presets", () => {
-  assert.equal(Engine.PRESET_WORKFLOWS.length, 4);
+test("PRESET_WORKFLOWS contains 5 valid acyclic DAG presets with the Capybara rescue first", () => {
+  assert.equal(Engine.PRESET_WORKFLOWS.length, 5);
+  assert.equal(Engine.PRESET_WORKFLOWS[0].id, "capybara-rescue");
   for (const wf of Engine.PRESET_WORKFLOWS) {
     const res = Engine.validateAndTopoSort(wf.tasks);
     assert.equal(res.topoOrder.length, wf.tasks.length);

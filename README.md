@@ -15,7 +15,9 @@ Everything that matters sits on one screen: the live dependency graph, the finis
 - **Delay shockwave.** The `+15m delay shockwave` button sends a delay through the graph hop by hop. Each downstream task shows how far it moved, float absorbs what it can, and the finish time updates at once.
 - **Crash advisor.** For every task it tests four moves: trim 10 minutes, trim 15 minutes, trim 25 percent, or split across two workers. Each candidate is re-solved exactly, ranked by real minutes saved, and applied with one click.
 - **New bottleneck detection.** When a cut makes a different chain set the finish, the advisor names that chain and says how many minutes of the cut are lost.
-- **Undo and redo.** Edits, completions, delays, crash moves, preset switches and imported plans are all reversible.
+- **Experiment bar.** One click each: `Absorb a delay` injects 15 minutes into the task with the most float and shows the finish hold still, `Push the deadline` delays a 0m float task and moves the finish minute for minute, and `Preview the best fix` names the exact crash move that buys the most time. Each experiment leaves a persistent causal sentence beside the graph.
+- **Bottleneck lab.** A slider changes the selected task's duration and an SVG response curve shows the exact finish `max(rival chain, through + change)`, the rival floor, the crossover point, and a live preview against the current plan. `Apply change` commits as one undoable step; `Reset preview` snaps back.
+- **Undo and redo.** Edits, completions, delays, crash moves, preset switches, imported plans and settled planning settings are all reversible, start date included.
 - **Keyboard shortcuts.** `Cmd` or `Ctrl` `Z` undoes, adding `Shift` redoes, `Space` starts or pauses the timer when you are not typing, and `?` opens the cheat sheet.
 
 ### Timeline and policies
@@ -28,13 +30,17 @@ Every task with its duration, [ES, EF] window, total float, free float, WSPT rat
 
 ### Focus timer
 
-Work is split into focus blocks with an editable block length, break interval, daily focus budget, start date and a 09:00 local day start. Long tasks split across blocks and roll into the next day, and the daily budget caps focus work independently of the block length. Each day is anchored with calendar-date arithmetic, so the wall-clock start stays at 09:00 local across daylight saving transitions. The timer always loads the scheduled block's real duration and stays visible in the top bar.
+Work is split into focus blocks with an editable block length, break interval, daily focus budget, start date and a 09:00 local day start. Long tasks split across blocks and roll into the next day, and the daily budget caps focus work independently of the block length. Every plan day resolves its own UTC offset from the calendar date, so a daylight saving transition inside a plan keeps each day anchored at 09:00 local. The countdown derives from an absolute deadline timestamp instead of counting interval callbacks, so background-tab throttling, pause, resume, queue edits and tab visibility changes all recover the true remaining time. The timer always loads the scheduled block's real duration and stays visible in the top bar.
+
+### Saved plan status
+
+A badge in the top bar shows `Saved locally` after every write, and switches to a visible warning when saving is blocked (private browsing or a full quota), when restore data is corrupt, or when storage is unavailable. The plan, completed tasks, selection and all planning settings persist across reloads.
 
 ### Risk and workers
 
-- **Critical path enumeration.** Every distinct longest dependency chain, with ties resolved deterministically.
+- **Critical path enumeration.** Dynamic programming counts every distinct longest dependency chain exactly, even when branching produces astronomically many equal chains (a 60 diamond graph reports all 1,152,921,504,606,846,976 of them). The table materializes at most 256 and says so explicitly when truncated. The count always includes the active delay.
 - **Parallel worker scheduling and swimlanes.** The worker that is free first takes the ready task that can start soonest. The swimlane chart and ledger show each worker's tasks, busy minutes, idle gaps, utilization and speedup.
-- **Schedule risk sweep.** A bounded delay is injected into each task in turn, reporting worst case, mean impact and how many delays float absorbs.
+- **Schedule risk sweep.** A bounded delay is injected into each task in turn, reporting worst case, mean impact and how many delays float absorbs. An independent `verifyPlan` check re-validates the CPM identities, worker precedence and work conservation on every plan.
 - **Calendar validation and diagnostics.** A structural `.ics` validator and a JSON diagnostics export.
 
 ### Sharing and printing
@@ -47,7 +53,7 @@ Shared links are treated as hostile input. The decoder accepts only a fixed posi
 
 ### Presets and the secret mascot
 
-Four hand written presets ship with the page: Hackathon MVP Launch, Finals & Lab Prep, SaaS Feature Release, and **AP Exam & Robotics Build Week**. The Capybara Chief Slack Auditor balances a tangerine beside the graph. It worries when a delay pushes the finish, cheers when critical work clears, hops for completed focus blocks, and throws a tangerine party if you pet it five times. All of its motion respects `prefers-reduced-motion`.
+Five hand written presets ship with the page, and the **Capybara Habitat Rescue** opens first: a flooded capybara habitat rebuilt as a nine task dependency graph with an evacuation ramp, a veterinary check and a reopen gate. The Capybara Chief Slack Auditor explains what the numbers mean in plain words, balances a tangerine beside the graph, It worries when a delay pushes the finish, cheers when critical work clears, hops for completed focus blocks, and throws a tangerine party if you pet it five times. All of its motion respects `prefers-reduced-motion`.
 
 ## Verification
 
@@ -57,11 +63,12 @@ Node.js 18 or newer is sufficient. No install is needed.
 npm test
 ```
 
-That expands to `node --test tests/*.test.js` and passes **203 tests, 0 failed, 0 skipped, 0 cancelled**:
+That expands to `node --test tests/*.test.js` and passes **238 tests, 0 failed, 0 skipped, 0 cancelled**:
 
 | Suite | Tests | Coverage |
 | --- | --- | --- |
 | `tests/studio.test.js` | 97 | Crash advisor (checked against full re-solves and an independent brute-force search), new bottleneck detection, tied chains, split rewiring, graph queries, shockwave tracing, undo and redo, share link round trips, 44 hostile links, deterministic fuzzing, keyboard shortcuts, XSS sinks, print plan, capybara reactions |
+| `tests/wave1.test.js` | 35 | Exact DP path counts (2^60 chains counted, never materialized), delay-aware telemetry, Bottleneck Lab crossovers verified against full re-solves, verifyPlan invariants, absolute-deadline timer, per-day DST offsets, inspector freshness, storage status states, settings persistence and undo, input defenses, UTF-8 ICS folding |
 | `tests/qa-fixes.test.js` | 27 | Timer block durations, preset switch recovery, empty-state persistence, delay propagation, 120 work minutes labeling, break and budget clamping, DST anchoring, strict ICS validation, exact-float boundaries |
 | `tests/advanced.test.js` | 28 | Critical chain enumeration, multi-worker ledger, deterministic risk sweep, ICS validation, local wall-clock starts, plan telemetry, cross-preset regressions |
 | `tests/phase2.test.js` | 23 | Policy comparison, AP preset, Pomodoro flow, inspector edit and delete guards, persistence, comparison strip, next action, swimlanes, HTML escaping |
@@ -103,7 +110,7 @@ All internal units are minutes. Timestamps in `.ics` output are UTC.
 - A split assumes the task divides into two equal parallel halves, each carrying a fixed 5 minute handoff. Real tasks may not divide that cleanly.
 - Critical path timing assumes enough people to run parallel tasks. The worker swimlanes show the effect of a fixed team.
 - The risk sweep is a deterministic one-task-at-a-time delay test, not a Monte Carlo simulation.
-- All four preset workflows and their weights are illustrative, not measured project data.
+- All five preset workflows and their weights are illustrative, not measured project data; the Capybara Habitat Rescue is a teaching example, not a real wildlife operation.
 - The `.ics` output is structurally validated by the shipped validator. It has not been imported into an external calendar client.
 - Undo history lasts for the current page session. The plan itself persists in `localStorage`.
 - No user study has been run.
@@ -116,7 +123,7 @@ styles.css         instrument theme, responsive layout, motion and print plan
 js/dag-engine.js   CPM, crash advisor, shockwave, history, share links, schedulers, risk, ICS
 js/ui-dag.js       SVG DAG, Gantt and worker swimlane renderers
 js/app.js          controller, inspector, timer, shortcuts, sharing, exports
-tests/             eight node:test files
+tests/             nine node:test files
 video/             demo narration and recording steps
 ```
 
